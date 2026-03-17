@@ -1,19 +1,20 @@
 from __future__ import annotations
 
 from datetime import datetime
+from textwrap import indent
 
 from fishmindos.agent_core import DialogueGenerator, IntentParser, MemoryStore, TaskPlanner
 from fishmindos.execution_runtime import TaskExecutor
 from fishmindos.interaction import TextAdapter
 from fishmindos.models import TaskStatus
-from fishmindos.skill_runtime import SkillRegistry, register_builtin_skills
+from fishmindos.skill_runtime import SkillOS, SkillRegistry, register_builtin_skills
 from fishmindos.world_model import WorldModel
 
 
 class FishMindOSApp:
     """FishMindOS 初版可运行框架。"""
 
-    def __init__(self) -> None:
+    def __init__(self, skills_dir: str = "skill_store") -> None:
         self.adapter = TextAdapter()
         self.intent_parser = IntentParser()
         self.dialogue = DialogueGenerator()
@@ -26,7 +27,18 @@ class FishMindOSApp:
 
         self.registry = SkillRegistry()
         register_builtin_skills(self.registry)
+
+        self.skill_os = SkillOS(skills_dir=skills_dir)
+        self.skill_os.load_plugins(self.registry)
+
         self.executor = TaskExecutor(self.registry)
+
+    def generate_reusable_skill(self, name: str, response_text: str, description: str = "") -> str:
+        """由 OS 生成并保存脚本技能，下次启动自动复用。"""
+        script_body = indent(f'return {{"ok": True, "detail": "{response_text}"}}', "    ")
+        path = self.skill_os.generate_skill_script(name=name, script_body=script_body, description=description)
+        self.skill_os.load_plugins(self.registry)
+        return str(path)
 
     def run_text(self, text: str, robot_id: str = "dog-01") -> dict:
         event = self.adapter.parse(text=text, robot_id=robot_id)
@@ -50,4 +62,5 @@ class FishMindOSApp:
             "plan": plan,
             "status": TaskStatus(status).value,
             "events": execution_events,
+            "skills": self.registry.names(),
         }

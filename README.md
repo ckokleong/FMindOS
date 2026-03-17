@@ -187,7 +187,7 @@ FishMindOS 不是单一机器人的脚本集合，而是机器人团队可复用
 - `interaction`：输入适配
 - `agent_core`：意图解析、规划、话术、记忆
 - `world_model`：点位建模与查询
-- `skill_runtime`：技能协议、注册中心、内置技能
+- `skill_runtime`：技能协议、注册中心、内置技能 + 插件技能加载（SkillOS）
 - `execution_runtime`：任务执行器
 - `main.py`：最小可运行 Demo
 
@@ -196,3 +196,10 @@ FishMindOS 不是单一机器人的脚本集合，而是机器人团队可复用
 ```bash
 python3 main.py
 ```
+
+插件化机制（新增）：
+
+- `SkillOS` 可把技能生成为独立 Python 脚本并持久化到 `skill_store/`
+- 系统启动时自动扫描并加载脚本技能（插件）
+- 生成后的技能可跨重启复用，不需要再次手写注册
+
