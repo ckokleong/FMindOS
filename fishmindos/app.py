@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from textwrap import indent
 
 from fishmindos.agent_core import DialogueGenerator, IntentParser, MemoryStore, TaskPlanner
 from fishmindos.execution_runtime import TaskExecutor
@@ -35,8 +34,11 @@ class FishMindOSApp:
 
     def generate_reusable_skill(self, name: str, response_text: str, description: str = "") -> str:
         """由 OS 生成并保存脚本技能，下次启动自动复用。"""
-        script_body = indent(f'return {{"ok": True, "detail": "{response_text}"}}', "    ")
-        path = self.skill_os.generate_skill_script(name=name, script_body=script_body, description=description)
+        path = self.skill_os.generate_skill_script(
+            name=name,
+            response_text=response_text,
+            description=description,
+        )
         self.skill_os.load_plugins(self.registry)
         return str(path)
 
