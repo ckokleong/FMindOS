@@ -177,31 +177,3 @@ pending → running → success / failed / cancel
 ## 7. 愿景
 
 FishMindOS 不是单一机器人的脚本集合，而是机器人团队可复用的“智能体操作系统”，用于持续沉淀任务策略、地图知识与跨设备技能生态。
-
----
-
-## 8. Python 初版框架（可运行）
-
-已提供基础代码骨架（目录 `fishmindos/`）：
-
-- `interaction`：输入适配
-- `agent_core`：意图解析、规划、话术、记忆
-- `world_model`：点位建模与查询
-- `skill_runtime`：技能协议、注册中心、内置技能 + 插件技能加载（SkillOS）
-- `execution_runtime`：任务执行器
-- `main.py`：最小可运行 Demo
-
-运行示例：
-
-```bash
-python3 main.py
-```
-
-插件化机制（新增）：
-
-- `SkillOS` 可把技能生成为独立 Python 脚本并持久化到 `skill_store/`
-- 系统启动时自动扫描并加载脚本技能（插件）
-- 生成后的技能可跨重启复用，不需要再次手写注册
-- 生成技能时会自动规范化名称（如 `custom notify` -> `custom_notify`）
-- 插件加载失败会被自动跳过，避免单个坏脚本拖垮系统启动
-
