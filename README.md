@@ -55,7 +55,6 @@ interaction -> agent_core -> local MCP -> execution_runtime -> skill_runtime -> 
 ## Run
 
 ```powershell
-conda activate yolov3
 python main.py
 ```
 
