@@ -1,11 +1,19 @@
 {
+  "adapter": {
+    "type": "mock",
+    "battery": 85.0,
+    "position": {"x": 1.0, "y": 2.0},
+    "nav_delay": 2.0
+  },
   "llm": {
     "provider": "zhipu",
     "base_url": "",
     "api_url": "",
     "model": "glm-5",
     "api_key": "replace-with-your-api-key",
-    "timeout_sec": 30,
+    "timeout_sec": 90,
+    "max_tokens": 1024,
+    "retry_count": 1,
     "prompt_mode": "full"
   },
   "nav": {
@@ -45,5 +53,16 @@
   },
   "task_chains": {
     "storage_file": "task_chains.json"
+  },
+  "world_model": {
+    "default_map_name": "26层"
+  },
+  "callback": {
+    "enabled": false,
+    "host": "0.0.0.0",
+    "port": 8081,
+    "path": "/callback/nav_event",
+    "url": null,
+    "max_events": 100
   }
 }

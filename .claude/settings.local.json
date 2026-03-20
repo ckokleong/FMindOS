@@ -2,7 +2,20 @@
   "permissions": {
     "allow": [
       "Bash(python -c \":*)",
-      "Bash(python -c \"import ast; ast.parse\\(open\\(''main.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''OK''\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''main.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''OK''\\)\")",
+      "Bash(pip install:*)",
+      "Bash(python -c \"import websocket; print\\(websocket.__version__\\)\")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(conda run:*)",
+      "Bash(D:/miniconda3/envs/yolov3/python.exe test_rosbridge.py)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''fishmindos/skill_runtime/rosbridge_api.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''fishmindos/agent_core/llm.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''OK''\\)\")",
+      "Bash(cd:*)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''fishmindos/skill_runtime/nav_skills.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''OK''\\)\")",
+      "Bash(grep -E \"\\\\.py$\")",
+      "WebSearch",
+      "Bash(python -m pytest tests/test_app.py::test_react_agent_can_call_tool_and_return_text -xvs)",
+      "Bash(python:*)"
     ]
   }
 }
