@@ -41,6 +41,9 @@ from fishmindos.skills.builtin.system import (
     GetPoseSkill,
     WaitEventSkill,
 )
+from fishmindos.skills.builtin.mission import (
+    SubmitMissionSkill,
+)
 
 __all__ = [
     "StartNavigationSkill",
@@ -63,4 +66,5 @@ __all__ = [
     "GetChargingStatusSkill",
     "GetPoseSkill",
     "WaitEventSkill",
+    "SubmitMissionSkill",
 ]

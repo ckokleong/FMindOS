@@ -64,5 +64,29 @@
     "path": "/callback/nav_event",
     "url": null,
     "max_events": 100
+  },
+  "world": {
+    "enabled": true,
+    "path": "fishmindos/world/semantic_map.json",
+    "auto_switch_map": true,
+    "prefer_current_map": true,
+    "adapter_fallback": false
+  },
+  "soul": {
+    "enabled": true,
+    "path": "fishmindos/soul/soul.json",
+    "max_memories": 200
+  },
+  "mission": {
+    "wait_confirm_reminder_enabled": true,
+    "wait_confirm_reminder_interval_sec": 20,
+    "wait_confirm_reminder_text": "请确认后我再继续执行。"
+  },
+  "app": {
+    "debug": false,
+    "log_level": "INFO",
+    "identity": "机器人助手",
+    "prompt_profile": null,
+    "language": "zh"
   }
 }

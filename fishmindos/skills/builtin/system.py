@@ -25,7 +25,7 @@ class GetBatterySkill(Skill):
         
         battery = self.adapter.get_battery()
         soc = battery.get("soc")
-        charging = battery.get("charging", False)
+        charging = battery.get("charging")
         error = battery.get("error")
         
         # 如果无法获取电量
@@ -35,7 +35,17 @@ class GetBatterySkill(Skill):
             else:
                 return SkillResult(False, "电量接口不可用，请通过机器人面板查看电量")
         
-        status = "正在充电" if charging else "未充电"
+        # 【改进】：正确处理 charging 状态
+        # - charging=True: 正在充电
+        # - charging=False: 未充电
+        # - charging=None: 无法获取充电状态（WebSocket 未连接或数据未获取）
+        if charging is True:
+            status = "正在充电"
+        elif charging is False:
+            status = "未充电"
+        else:
+            status = "充电状态未知"
+        
         message = f"当前电量约 {soc:.1f}%，{status}"
         
         return SkillResult(True, message, battery)
@@ -176,16 +186,20 @@ class GetChargingStatusSkill(Skill):
         if not self.adapter:
             return SkillResult(False, "适配器未设置")
         
-        status = self.adapter.get_status()
+        # 【核心修改】：强制改为调用 get_battery()，从而触发底层的 WebSocket 电流检测！
+        battery_data = self.adapter.get_battery()
         
-        if status.charging:
-            message = f"正在充电，当前电量约 {status.battery_soc:.1f}%。" if status.battery_soc else "正在充电。"
+        is_charging = battery_data.get("charging", False)
+        soc = battery_data.get("soc")
+        
+        if is_charging:
+            message = f"正在充电，当前电量约 {soc:.1f}%。" if soc is not None else "正在充电。"
         else:
-            message = f"未在充电，当前电量约 {status.battery_soc:.1f}%。" if status.battery_soc else "未在充电。"
+            message = f"未在充电，当前电量约 {soc:.1f}%。" if soc is not None else "未在充电。"
         
         return SkillResult(True, message, {
-            "charging": status.charging,
-            "battery_soc": status.battery_soc
+            "charging": is_charging,
+            "battery_soc": soc
         })
 
 

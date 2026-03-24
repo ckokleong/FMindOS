@@ -45,6 +45,9 @@ from fishmindos.skills.builtin.callback import (
     GetCallbackStatusSkill,
     StartCallbackServerSkill,
 )
+from fishmindos.skills.builtin.mission import (
+    SubmitMissionSkill,
+)
 from fishmindos.skills.builtin.items import (
     ItemPickupSkill,
     ItemDropoffSkill,
@@ -94,6 +97,7 @@ __all__ = [
     "SetCallbackSkill",
     "GetCallbackStatusSkill",
     "StartCallbackServerSkill",
+    "SubmitMissionSkill",
     # 物品管理技能
     "ItemPickupSkill",
     "ItemDropoffSkill",
@@ -140,6 +144,7 @@ def create_default_registry() -> SkillRegistry:
     registry.register(SetCallbackSkill())
     registry.register(GetCallbackStatusSkill())
     registry.register(StartCallbackServerSkill())
+    registry.register(SubmitMissionSkill())
     
     # 物品管理技能
     registry.register(ItemPickupSkill())
@@ -147,4 +152,11 @@ def create_default_registry() -> SkillRegistry:
     registry.register(ItemCheckSkill())
     registry.register(ItemPlaceSkill())
     
+    # 仅保留高层编排入口给 LLM，其他旧技能仍可内部调用但不对 LLM 暴露
+    llm_visible = {"submit_mission", "system_status"}
+    for skill_name in registry.list_all():
+        skill = registry.get(skill_name)
+        if skill is not None:
+            skill.expose_as_tool = skill_name in llm_visible
+
     return registry

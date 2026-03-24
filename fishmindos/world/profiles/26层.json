@@ -1,0 +1,714 @@
+{
+  "name": "26层世界",
+  "description": "26层的默认语义世界，重点覆盖大厅接待、巡检路线、待机点和任务结束后的回充收尾。",
+  "default_map_name": "26层",
+  "default_map_id": 51,
+  "maps": [
+    {
+      "name": "26层",
+      "map_id": 51,
+      "aliases": [
+        "26F",
+        "26楼"
+      ],
+      "description": "26层办公与公共区域地图，适合大厅接待、巡检和任务收尾回充。"
+    }
+  ],
+  "locations": [
+    {
+      "name": "回充点",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "回充点",
+      "waypoint_id": 234,
+      "location_type": "dock",
+      "description": "机器人任务结束后返回充电的位置，用于等待回充完成，不作为普通送物终点。",
+      "category": "charging",
+      "aliases": [
+        "充电点",
+        "回充",
+        "回桩"
+      ],
+      "task_hints": [
+        "返回充电",
+        "任务结束后回充",
+        "等待回充完成"
+      ],
+      "relations": [],
+      "tags": [
+        "dock",
+        "charging"
+      ],
+      "metadata": {
+        "x": 0.039625533391450724,
+        "y": -0.030918886969614104,
+        "z": -0.0062847314606949605,
+        "yaw": -0.18790693567533504,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "大厅",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "大厅",
+      "waypoint_id": 235,
+      "location_type": "waypoint",
+      "description": "26层主要公共区域，适合接待、会合、送物到达后播报。",
+      "category": "reception",
+      "aliases": [
+        "大堂",
+        "门厅",
+        "前厅"
+      ],
+      "task_hints": [
+        "接待",
+        "会合",
+        "送物",
+        "播报"
+      ],
+      "relations": [
+        {
+          "type": "after_task_return",
+          "target": "回充点"
+        }
+      ],
+      "tags": [
+        "public_area"
+      ],
+      "metadata": {
+        "x": 1.7028676271438599,
+        "y": -21.913930892944336,
+        "z": -0.06710489094257355,
+        "yaw": 0.0,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "路点3",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "路点3",
+      "waypoint_id": 236,
+      "location_type": "waypoint",
+      "description": "",
+      "category": "general",
+      "aliases": [],
+      "task_hints": [],
+      "relations": [],
+      "tags": [
+        "waypoint"
+      ],
+      "metadata": {
+        "x": -10.840935992511216,
+        "y": -1.8205386491586117,
+        "z": 0.0030782539620134433,
+        "yaw": 1.3491462271072687,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "巡检点_4_2026-3-18 11:23:31",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "巡检点_4_2026-3-18 11:23:31",
+      "waypoint_id": 240,
+      "location_type": "waypoint",
+      "description": "26层巡检路线中的检查点，适合巡逻、巡检、路径经过，不是常规接待点。",
+      "category": "patrol",
+      "aliases": [
+        "巡检点"
+      ],
+      "task_hints": [
+        "巡检",
+        "巡逻",
+        "路径经过"
+      ],
+      "relations": [
+        {
+          "type": "same_route",
+          "target": "巡检路线"
+        }
+      ],
+      "tags": [
+        "patrol"
+      ],
+      "metadata": {
+        "x": 0.16890694360781086,
+        "y": -0.07237261750580007,
+        "z": -0.014599280333235523,
+        "yaw": -0.26856064418157594,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "巡检点_5_2026-3-18 14:09:27",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "巡检点_5_2026-3-18 14:09:27",
+      "waypoint_id": 241,
+      "location_type": "waypoint",
+      "description": "26层巡检路线中的检查点，适合巡逻、巡检、路径经过，不是常规接待点。",
+      "category": "patrol",
+      "aliases": [
+        "巡检点"
+      ],
+      "task_hints": [
+        "巡检",
+        "巡逻",
+        "路径经过"
+      ],
+      "relations": [
+        {
+          "type": "same_route",
+          "target": "巡检路线"
+        }
+      ],
+      "tags": [
+        "patrol"
+      ],
+      "metadata": {
+        "x": 1.8968420028686523,
+        "y": -1.3307125568389893,
+        "z": -0.028080346062779427,
+        "yaw": -0.20017048888306133,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "巡检点_6_2026-3-18 14:09:33",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "巡检点_6_2026-3-18 14:09:33",
+      "waypoint_id": 242,
+      "location_type": "waypoint",
+      "description": "26层巡检路线中的检查点，适合巡逻、巡检、路径经过，不是常规接待点。",
+      "category": "patrol",
+      "aliases": [
+        "巡检点"
+      ],
+      "task_hints": [
+        "巡检",
+        "巡逻",
+        "路径经过"
+      ],
+      "relations": [
+        {
+          "type": "same_route",
+          "target": "巡检路线"
+        }
+      ],
+      "tags": [
+        "patrol"
+      ],
+      "metadata": {
+        "x": 8.528056144714355,
+        "y": -2.5802319049835205,
+        "z": -0.055204614996910095,
+        "yaw": 0.0,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "巡检点_7_2026-3-18 15:03:36",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "巡检点_7_2026-3-18 15:03:36",
+      "waypoint_id": 243,
+      "location_type": "waypoint",
+      "description": "26层巡检路线中的检查点，适合巡逻、巡检、路径经过，不是常规接待点。",
+      "category": "patrol",
+      "aliases": [
+        "巡检点"
+      ],
+      "task_hints": [
+        "巡检",
+        "巡逻",
+        "路径经过"
+      ],
+      "relations": [
+        {
+          "type": "same_route",
+          "target": "巡检路线"
+        }
+      ],
+      "tags": [
+        "patrol"
+      ],
+      "metadata": {
+        "x": -2.204678013877936,
+        "y": -0.29995246117852375,
+        "z": -0.0006399063521488847,
+        "yaw": 0.21156458618368346,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "deepsleep",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "deepsleep",
+      "waypoint_id": 244,
+      "location_type": "waypoint",
+      "description": "机器人低功耗待机或安静停留位置，适合待命、休眠，不适合作为送物终点。",
+      "category": "rest",
+      "aliases": [
+        "休眠点",
+        "待机点"
+      ],
+      "task_hints": [
+        "待命",
+        "休眠",
+        "安静停留"
+      ],
+      "relations": [
+        {
+          "type": "after_task_return",
+          "target": "回充点"
+        }
+      ],
+      "tags": [
+        "rest"
+      ],
+      "metadata": {
+        "x": -9.86990416166963,
+        "y": 3.948601789849543,
+        "z": -0.000776435067608968,
+        "yaw": 0.3959791139299463,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "巡检点_9_2026-3-18 16:19:55",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "巡检点_9_2026-3-18 16:19:55",
+      "waypoint_id": 245,
+      "location_type": "waypoint",
+      "description": "26层巡检路线中的检查点，适合巡逻、巡检、路径经过，不是常规接待点。",
+      "category": "patrol",
+      "aliases": [
+        "巡检点"
+      ],
+      "task_hints": [
+        "巡检",
+        "巡逻",
+        "路径经过"
+      ],
+      "relations": [
+        {
+          "type": "same_route",
+          "target": "巡检路线"
+        }
+      ],
+      "tags": [
+        "patrol"
+      ],
+      "metadata": {
+        "x": -9.876412391662598,
+        "y": 2.323220729827881,
+        "z": 0.023461317643523216,
+        "yaw": 0.0,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "巡检点_10_2026-3-18 16:27:05",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "巡检点_10_2026-3-18 16:27:05",
+      "waypoint_id": 246,
+      "location_type": "waypoint",
+      "description": "26层巡检路线中的检查点，适合巡逻、巡检、路径经过，不是常规接待点。",
+      "category": "patrol",
+      "aliases": [
+        "巡检点"
+      ],
+      "task_hints": [
+        "巡检",
+        "巡逻",
+        "路径经过"
+      ],
+      "relations": [
+        {
+          "type": "same_route",
+          "target": "巡检路线"
+        }
+      ],
+      "tags": [
+        "patrol"
+      ],
+      "metadata": {
+        "x": -9.371915100786843,
+        "y": 5.032971376496909,
+        "z": 0.003506902708816779,
+        "yaw": 1.1992863004249459,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "巡检点_11_2026-3-18 16:31:13",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "巡检点_11_2026-3-18 16:31:13",
+      "waypoint_id": 247,
+      "location_type": "waypoint",
+      "description": "26层巡检路线中的检查点，适合巡逻、巡检、路径经过，不是常规接待点。",
+      "category": "patrol",
+      "aliases": [
+        "巡检点"
+      ],
+      "task_hints": [
+        "巡检",
+        "巡逻",
+        "路径经过"
+      ],
+      "relations": [
+        {
+          "type": "same_route",
+          "target": "巡检路线"
+        }
+      ],
+      "tags": [
+        "patrol"
+      ],
+      "metadata": {
+        "x": -10.21327871618382,
+        "y": 2.7443232685445427,
+        "z": 0.02049701100594503,
+        "yaw": -1.7079620882883086,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "巡检点_12_2026-3-19 10:20:35",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "巡检点_12_2026-3-19 10:20:35",
+      "waypoint_id": 248,
+      "location_type": "waypoint",
+      "description": "26层巡检路线中的检查点，适合巡逻、巡检、路径经过，不是常规接待点。",
+      "category": "patrol",
+      "aliases": [
+        "巡检点"
+      ],
+      "task_hints": [
+        "巡检",
+        "巡逻",
+        "路径经过"
+      ],
+      "relations": [
+        {
+          "type": "same_route",
+          "target": "巡检路线"
+        }
+      ],
+      "tags": [
+        "patrol"
+      ],
+      "metadata": {
+        "x": 0.6128284319716866,
+        "y": 1.2288086496686828,
+        "z": -0.027428854463843078,
+        "yaw": -0.2075048969493054,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "巡检点_13_2026-03-20 21:35:26",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "巡检点_13_2026-03-20 21:35:26",
+      "waypoint_id": 251,
+      "location_type": "waypoint",
+      "description": "26层巡检路线中的检查点，适合巡逻、巡检、路径经过，不是常规接待点。",
+      "category": "patrol",
+      "aliases": [
+        "巡检点"
+      ],
+      "task_hints": [
+        "巡检",
+        "巡逻",
+        "路径经过"
+      ],
+      "relations": [
+        {
+          "type": "same_route",
+          "target": "巡检路线"
+        }
+      ],
+      "tags": [
+        "patrol"
+      ],
+      "metadata": {
+        "x": 0.10059956319994008,
+        "y": -0.018918406647752177,
+        "z": -0.25356100205133736,
+        "yaw": -0.16954115965427802,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "巡检点_14_2026-03-20 21:35:27",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "巡检点_14_2026-03-20 21:35:27",
+      "waypoint_id": 252,
+      "location_type": "waypoint",
+      "description": "26层巡检路线中的检查点，适合巡逻、巡检、路径经过，不是常规接待点。",
+      "category": "patrol",
+      "aliases": [
+        "巡检点"
+      ],
+      "task_hints": [
+        "巡检",
+        "巡逻",
+        "路径经过"
+      ],
+      "relations": [
+        {
+          "type": "same_route",
+          "target": "巡检路线"
+        }
+      ],
+      "tags": [
+        "patrol"
+      ],
+      "metadata": {
+        "x": 0.09968711061540086,
+        "y": -0.01945173061890856,
+        "z": -0.25289068994911656,
+        "yaw": -0.1694601897364978,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "巡检点_15_2026-03-20 21:35:27",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "巡检点_15_2026-03-20 21:35:27",
+      "waypoint_id": 253,
+      "location_type": "waypoint",
+      "description": "26层巡检路线中的检查点，适合巡逻、巡检、路径经过，不是常规接待点。",
+      "category": "patrol",
+      "aliases": [
+        "巡检点"
+      ],
+      "task_hints": [
+        "巡检",
+        "巡逻",
+        "路径经过"
+      ],
+      "relations": [
+        {
+          "type": "same_route",
+          "target": "巡检路线"
+        }
+      ],
+      "tags": [
+        "patrol"
+      ],
+      "metadata": {
+        "x": 0.1016373628921983,
+        "y": -0.0199059392071675,
+        "z": -0.25313790673440884,
+        "yaw": -0.16940838139209163,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "巡检点_16_2026-03-20 21:35:27",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "巡检点_16_2026-03-20 21:35:27",
+      "waypoint_id": 254,
+      "location_type": "waypoint",
+      "description": "26层巡检路线中的检查点，适合巡逻、巡检、路径经过，不是常规接待点。",
+      "category": "patrol",
+      "aliases": [
+        "巡检点"
+      ],
+      "task_hints": [
+        "巡检",
+        "巡逻",
+        "路径经过"
+      ],
+      "relations": [
+        {
+          "type": "same_route",
+          "target": "巡检路线"
+        }
+      ],
+      "tags": [
+        "patrol"
+      ],
+      "metadata": {
+        "x": 0.09870961197270393,
+        "y": -0.019162978201094374,
+        "z": -0.2531663214566051,
+        "yaw": -0.16951935502618024,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "巡检点_17_2026-03-20 21:35:27",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "巡检点_17_2026-03-20 21:35:27",
+      "waypoint_id": 255,
+      "location_type": "waypoint",
+      "description": "26层巡检路线中的检查点，适合巡逻、巡检、路径经过，不是常规接待点。",
+      "category": "patrol",
+      "aliases": [
+        "巡检点"
+      ],
+      "task_hints": [
+        "巡检",
+        "巡逻",
+        "路径经过"
+      ],
+      "relations": [
+        {
+          "type": "same_route",
+          "target": "巡检路线"
+        }
+      ],
+      "tags": [
+        "patrol"
+      ],
+      "metadata": {
+        "x": 0.10099901875608115,
+        "y": -0.018666485525087,
+        "z": -0.25307511592382265,
+        "yaw": -0.16941673514964364,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "巡检点_18_2026-03-20 21:35:28",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "巡检点_18_2026-03-20 21:35:28",
+      "waypoint_id": 256,
+      "location_type": "waypoint",
+      "description": "26层巡检路线中的检查点，适合巡逻、巡检、路径经过，不是常规接待点。",
+      "category": "patrol",
+      "aliases": [
+        "巡检点"
+      ],
+      "task_hints": [
+        "巡检",
+        "巡逻",
+        "路径经过"
+      ],
+      "relations": [
+        {
+          "type": "same_route",
+          "target": "巡检路线"
+        }
+      ],
+      "tags": [
+        "patrol"
+      ],
+      "metadata": {
+        "x": 0.09916455236281345,
+        "y": -0.01961882290313963,
+        "z": -0.253102519083152,
+        "yaw": -0.16952263770239753,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "巡检点_19_2026-03-20 21:35:28",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "巡检点_19_2026-03-20 21:35:28",
+      "waypoint_id": 257,
+      "location_type": "waypoint",
+      "description": "26层巡检路线中的检查点，适合巡逻、巡检、路径经过，不是常规接待点。",
+      "category": "patrol",
+      "aliases": [
+        "巡检点"
+      ],
+      "task_hints": [
+        "巡检",
+        "巡逻",
+        "路径经过"
+      ],
+      "relations": [
+        {
+          "type": "same_route",
+          "target": "巡检路线"
+        }
+      ],
+      "tags": [
+        "patrol"
+      ],
+      "metadata": {
+        "x": 0.1004762968298882,
+        "y": -0.020019430439797193,
+        "z": -0.2540161484530926,
+        "yaw": -0.16955963856001238,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "楼上",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "楼上",
+      "waypoint_id": 258,
+      "location_type": "waypoint",
+      "description": "26层里通向上层或楼层切换的过渡点，常用于跨楼层任务衔接。",
+      "category": "transition",
+      "aliases": [
+        "上楼",
+        "去楼上"
+      ],
+      "task_hints": [
+        "楼层切换",
+        "跨楼层任务",
+        "前往上层"
+      ],
+      "relations": [
+        {
+          "type": "transition_to",
+          "target": "其他楼层"
+        }
+      ],
+      "tags": [
+        "transition"
+      ],
+      "metadata": {
+        "x": -9.925053150476435,
+        "y": -11.958417694330398,
+        "z": 4.031076462822057,
+        "yaw": 2.631986931587896,
+        "source": "imported_from_nav_map"
+      }
+    },
+    {
+      "name": "卫生间",
+      "map_name": "26层",
+      "map_id": 51,
+      "waypoint_name": "卫生间",
+      "waypoint_id": 267,
+      "location_type": "waypoint",
+      "description": "",
+      "category": "general",
+      "aliases": [],
+      "task_hints": [],
+      "relations": [],
+      "tags": [
+        "waypoint"
+      ],
+      "metadata": {
+        "x": -2.3766849064602633,
+        "y": -7.222914032406809,
+        "z": -0.01962763557057405,
+        "yaw": 2.905159898730532,
+        "source": "imported_from_nav_map"
+      }
+    }
+  ]
+}

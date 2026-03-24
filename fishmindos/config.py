@@ -74,6 +74,24 @@ class CallbackConfig:
 
 
 @dataclass
+class WorldConfig:
+    """Semantic world configuration."""
+    enabled: bool = True
+    path: str = "fishmindos/world/semantic_map.json"
+    auto_switch_map: bool = True
+    prefer_current_map: bool = True
+    adapter_fallback: bool = False
+
+
+@dataclass
+class SoulConfig:
+    """Long-term learning configuration."""
+    enabled: bool = True
+    path: str = "fishmindos/soul/soul.json"
+    max_memories: int = 200
+
+
+@dataclass
 class SkillConfig:
     """技能配置"""
     search_paths: list = field(default_factory=lambda: ["skill_store", "skills"])
@@ -82,11 +100,20 @@ class SkillConfig:
 
 
 @dataclass
+class MissionConfig:
+    """任务流执行配置"""
+    wait_confirm_reminder_enabled: bool = True
+    wait_confirm_reminder_interval_sec: int = 20
+    wait_confirm_reminder_text: str = "请确认后我再继续执行。"
+
+
+@dataclass
 class AppConfig:
     """应用全局配置"""
     debug: bool = False
     log_level: str = "INFO"
-    identity: str = "机器狗"
+    identity: str = "机器人助手"
+    prompt_profile: Optional[str] = None
     language: str = "zh"
 
 
@@ -99,6 +126,9 @@ class FishMindConfig:
     rosbridge: RosbridgeConfig = field(default_factory=RosbridgeConfig)
     websocket: WebSocketConfig = field(default_factory=WebSocketConfig)
     callback: CallbackConfig = field(default_factory=CallbackConfig)
+    world: WorldConfig = field(default_factory=WorldConfig)
+    soul: SoulConfig = field(default_factory=SoulConfig)
+    mission: MissionConfig = field(default_factory=MissionConfig)
     skills: SkillConfig = field(default_factory=SkillConfig)
     app: AppConfig = field(default_factory=AppConfig)
     
@@ -158,6 +188,32 @@ class FishMindConfig:
             config.callback.path = os.getenv("FISHMIND_CALLBACK_PATH")
         if os.getenv("FISHMIND_CALLBACK_URL"):
             config.callback.url = os.getenv("FISHMIND_CALLBACK_URL")
+        if os.getenv("FISHMIND_WORLD_ENABLED"):
+            config.world.enabled = os.getenv("FISHMIND_WORLD_ENABLED").lower() == "true"
+        if os.getenv("FISHMIND_WORLD_PATH"):
+            config.world.path = os.getenv("FISHMIND_WORLD_PATH")
+        if os.getenv("FISHMIND_WORLD_AUTO_SWITCH_MAP"):
+            config.world.auto_switch_map = os.getenv("FISHMIND_WORLD_AUTO_SWITCH_MAP").lower() == "true"
+        if os.getenv("FISHMIND_WORLD_PREFER_CURRENT_MAP"):
+            config.world.prefer_current_map = os.getenv("FISHMIND_WORLD_PREFER_CURRENT_MAP").lower() == "true"
+        if os.getenv("FISHMIND_WORLD_ADAPTER_FALLBACK"):
+            config.world.adapter_fallback = os.getenv("FISHMIND_WORLD_ADAPTER_FALLBACK").lower() == "true"
+        if os.getenv("FISHMIND_SOUL_ENABLED"):
+            config.soul.enabled = os.getenv("FISHMIND_SOUL_ENABLED").lower() == "true"
+        if os.getenv("FISHMIND_SOUL_PATH"):
+            config.soul.path = os.getenv("FISHMIND_SOUL_PATH")
+        if os.getenv("FISHMIND_SOUL_MAX_MEMORIES"):
+            config.soul.max_memories = int(os.getenv("FISHMIND_SOUL_MAX_MEMORIES"))
+        if os.getenv("FISHMIND_WAIT_CONFIRM_REMINDER_ENABLED"):
+            config.mission.wait_confirm_reminder_enabled = os.getenv("FISHMIND_WAIT_CONFIRM_REMINDER_ENABLED").lower() == "true"
+        if os.getenv("FISHMIND_WAIT_CONFIRM_REMINDER_INTERVAL_SEC"):
+            config.mission.wait_confirm_reminder_interval_sec = int(os.getenv("FISHMIND_WAIT_CONFIRM_REMINDER_INTERVAL_SEC"))
+        if os.getenv("FISHMIND_WAIT_CONFIRM_REMINDER_TEXT"):
+            config.mission.wait_confirm_reminder_text = os.getenv("FISHMIND_WAIT_CONFIRM_REMINDER_TEXT")
+        if os.getenv("FISHMIND_APP_IDENTITY"):
+            config.app.identity = os.getenv("FISHMIND_APP_IDENTITY")
+        if os.getenv("FISHMIND_APP_PROMPT_PROFILE"):
+            config.app.prompt_profile = os.getenv("FISHMIND_APP_PROMPT_PROFILE") or None
         
         return config
     
@@ -219,6 +275,28 @@ class FishMindConfig:
             config.callback.path = os.getenv("FISHMIND_CALLBACK_PATH")
         if os.getenv("FISHMIND_CALLBACK_URL"):
             config.callback.url = os.getenv("FISHMIND_CALLBACK_URL")
+        if os.getenv("FISHMIND_WORLD_ENABLED"):
+            config.world.enabled = os.getenv("FISHMIND_WORLD_ENABLED").lower() == "true"
+        if os.getenv("FISHMIND_WORLD_PATH"):
+            config.world.path = os.getenv("FISHMIND_WORLD_PATH")
+        if os.getenv("FISHMIND_WORLD_AUTO_SWITCH_MAP"):
+            config.world.auto_switch_map = os.getenv("FISHMIND_WORLD_AUTO_SWITCH_MAP").lower() == "true"
+        if os.getenv("FISHMIND_WORLD_PREFER_CURRENT_MAP"):
+            config.world.prefer_current_map = os.getenv("FISHMIND_WORLD_PREFER_CURRENT_MAP").lower() == "true"
+        if os.getenv("FISHMIND_WORLD_ADAPTER_FALLBACK"):
+            config.world.adapter_fallback = os.getenv("FISHMIND_WORLD_ADAPTER_FALLBACK").lower() == "true"
+        if os.getenv("FISHMIND_SOUL_ENABLED"):
+            config.soul.enabled = os.getenv("FISHMIND_SOUL_ENABLED").lower() == "true"
+        if os.getenv("FISHMIND_SOUL_PATH"):
+            config.soul.path = os.getenv("FISHMIND_SOUL_PATH")
+        if os.getenv("FISHMIND_SOUL_MAX_MEMORIES"):
+            config.soul.max_memories = int(os.getenv("FISHMIND_SOUL_MAX_MEMORIES"))
+        if os.getenv("FISHMIND_WAIT_CONFIRM_REMINDER_ENABLED"):
+            config.mission.wait_confirm_reminder_enabled = os.getenv("FISHMIND_WAIT_CONFIRM_REMINDER_ENABLED").lower() == "true"
+        if os.getenv("FISHMIND_WAIT_CONFIRM_REMINDER_INTERVAL_SEC"):
+            config.mission.wait_confirm_reminder_interval_sec = int(os.getenv("FISHMIND_WAIT_CONFIRM_REMINDER_INTERVAL_SEC"))
+        if os.getenv("FISHMIND_WAIT_CONFIRM_REMINDER_TEXT"):
+            config.mission.wait_confirm_reminder_text = os.getenv("FISHMIND_WAIT_CONFIRM_REMINDER_TEXT")
         
         # 技能配置
         if os.getenv("FISHMIND_SKILLS_HOT_RELOAD"):
@@ -229,6 +307,10 @@ class FishMindConfig:
             config.app.debug = os.getenv("FISHMIND_APP_DEBUG").lower() == "true"
         if os.getenv("FISHMIND_APP_LOG_LEVEL"):
             config.app.log_level = os.getenv("FISHMIND_APP_LOG_LEVEL")
+        if os.getenv("FISHMIND_APP_IDENTITY"):
+            config.app.identity = os.getenv("FISHMIND_APP_IDENTITY")
+        if os.getenv("FISHMIND_APP_PROMPT_PROFILE"):
+            config.app.prompt_profile = os.getenv("FISHMIND_APP_PROMPT_PROFILE") or None
         
         return config
     
@@ -248,6 +330,9 @@ class FishMindConfig:
             "rosbridge": asdict(self.rosbridge),
             "websocket": asdict(self.websocket),
             "callback": asdict(self.callback),
+            "world": asdict(self.world),
+            "soul": asdict(self.soul),
+            "mission": asdict(self.mission),
             "skills": asdict(self.skills),
             "app": asdict(self.app)
         }
@@ -270,6 +355,12 @@ class FishMindConfig:
             if "ip" in callback_data and "host" not in callback_data:
                 callback_data["host"] = callback_data.pop("ip")
             config.callback = CallbackConfig(**callback_data)
+        if "world" in data:
+            config.world = WorldConfig(**data["world"])
+        if "soul" in data:
+            config.soul = SoulConfig(**data["soul"])
+        if "mission" in data:
+            config.mission = MissionConfig(**data["mission"])
         if "skills" in data:
             config.skills = SkillConfig(**data["skills"])
         if "app" in data:

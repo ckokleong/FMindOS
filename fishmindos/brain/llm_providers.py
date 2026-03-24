@@ -38,8 +38,14 @@ class LLMProvider(ABC):
         self.config = kwargs
     
     @abstractmethod
-    def chat(self, messages: List[LLMMessage], tools: Optional[List[Dict]] = None, 
-             temperature: float = 0.7, max_tokens: int = 2000) -> LLMResponse:
+    def chat(
+        self,
+        messages: List[LLMMessage],
+        tools: Optional[List[Dict]] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        tool_choice: Optional[Any] = None,
+    ) -> LLMResponse:
         """对话接口"""
         pass
     
@@ -72,8 +78,14 @@ class ZhipuProvider(LLMProvider):
         super().__init__(api_key, base_url or "https://open.bigmodel.cn/api/paas/v4", **kwargs)
         self.model = model
     
-    def chat(self, messages: List[LLMMessage], tools: Optional[List[Dict]] = None,
-             temperature: float = 0.7, max_tokens: int = 2000) -> LLMResponse:
+    def chat(
+        self,
+        messages: List[LLMMessage],
+        tools: Optional[List[Dict]] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        tool_choice: Optional[Any] = None,
+    ) -> LLMResponse:
         """调用智谱API"""
         url = f"{self.base_url}/chat/completions"
         
@@ -91,7 +103,7 @@ class ZhipuProvider(LLMProvider):
         
         if tools:
             payload["tools"] = tools
-            payload["tool_choice"] = "auto"
+            payload["tool_choice"] = tool_choice if tool_choice is not None else "auto"
         
         req = urllib.request.Request(
             url,
@@ -182,8 +194,14 @@ class OpenAIProvider(LLMProvider):
         super().__init__(api_key, base_url or "https://api.openai.com/v1", **kwargs)
         self.model = model
     
-    def chat(self, messages: List[LLMMessage], tools: Optional[List[Dict]] = None,
-             temperature: float = 0.7, max_tokens: int = 2000) -> LLMResponse:
+    def chat(
+        self,
+        messages: List[LLMMessage],
+        tools: Optional[List[Dict]] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        tool_choice: Optional[Any] = None,
+    ) -> LLMResponse:
         """调用OpenAI API"""
         url = f"{self.base_url}/chat/completions"
         
@@ -201,7 +219,7 @@ class OpenAIProvider(LLMProvider):
         
         if tools:
             payload["tools"] = tools
-            payload["tool_choice"] = "auto"
+            payload["tool_choice"] = tool_choice if tool_choice is not None else "auto"
         
         req = urllib.request.Request(
             url,
@@ -254,8 +272,14 @@ class ClaudeProvider(LLMProvider):
         super().__init__(api_key, base_url or "https://api.anthropic.com/v1", **kwargs)
         self.model = model
     
-    def chat(self, messages: List[LLMMessage], tools: Optional[List[Dict]] = None,
-             temperature: float = 0.7, max_tokens: int = 2000) -> LLMResponse:
+    def chat(
+        self,
+        messages: List[LLMMessage],
+        tools: Optional[List[Dict]] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        tool_choice: Optional[Any] = None,
+    ) -> LLMResponse:
         """调用Claude API"""
         url = f"{self.base_url}/messages"
         
@@ -359,8 +383,14 @@ class QwenProvider(LLMProvider):
         super().__init__(api_key, base_url or "https://dashscope.aliyuncs.com/api/v1", **kwargs)
         self.model = model
     
-    def chat(self, messages: List[LLMMessage], tools: Optional[List[Dict]] = None,
-             temperature: float = 0.7, max_tokens: int = 2000) -> LLMResponse:
+    def chat(
+        self,
+        messages: List[LLMMessage],
+        tools: Optional[List[Dict]] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        tool_choice: Optional[Any] = None,
+    ) -> LLMResponse:
         """调用通义千问API"""
         url = f"{self.base_url}/services/aigc/text-generation/generation"
         
@@ -446,8 +476,14 @@ class GeminiProvider(LLMProvider):
         super().__init__(api_key, base_url or "https://generativelanguage.googleapis.com/v1", **kwargs)
         self.model = model
     
-    def chat(self, messages: List[LLMMessage], tools: Optional[List[Dict]] = None,
-             temperature: float = 0.7, max_tokens: int = 2000) -> LLMResponse:
+    def chat(
+        self,
+        messages: List[LLMMessage],
+        tools: Optional[List[Dict]] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        tool_choice: Optional[Any] = None,
+    ) -> LLMResponse:
         """调用Gemini API"""
         url = f"{self.base_url}/models/{self.model}:generateContent?key={self.api_key}"
         

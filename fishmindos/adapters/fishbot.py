@@ -3,7 +3,7 @@ FishBot适配器 - 接入实际API
 集成HTTP API和WebSocket (Rosbridge)
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 import json
 import threading
 import time
@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 
 from fishmindos.adapters.base import RobotAdapter, MapInfo, WaypointInfo, TaskInfo, RobotStatus
 from fishmindos.adapters.ws_client import RosbridgeClient
+from fishmindos.core.event_bus import global_event_bus
 
 
 class FishBotAPIError(Exception):
@@ -145,6 +146,7 @@ class FishBotAdapter(RobotAdapter):
                 self.rosbridge_host, self.rosbridge_port, self.rosbridge_path
             )
             if self.ws_client.connect():
+                self.ws_client.on_nav_event(self._handle_ws_nav_event)
                 results["rosbridge"]["connected"] = True
             else:
                 results["rosbridge"]["error"] = "WebSocket连接失败"
@@ -176,6 +178,46 @@ class FishBotAdapter(RobotAdapter):
         """Persist callback enablement so waits can prefer callback-driven state."""
         self._callback_enabled = bool(enable and url)
         return super().set_callback_url(url, enable)
+
+    def _event_stream_enabled(self) -> bool:
+        return bool(self._callback_enabled or (self.ws_client and self.ws_client.connected))
+
+    def _should_prefer_callback_nav_state(self, callback_state: Dict[str, Any]) -> bool:
+        last_event_at = callback_state.get("last_event_at")
+        if not last_event_at:
+            return False
+        try:
+            age = time.time() - float(last_event_at)
+        except (TypeError, ValueError):
+            return False
+        if age <= 5.0:
+            return True
+        last_event = str(callback_state.get("last_event") or "")
+        return any(keyword in last_event for keyword in ["arriv", "dock", "charg", "stop"])
+
+    def _handle_ws_nav_event(self, message: Dict[str, Any]) -> None:
+        """Consume native rosbridge /nav_event payloads."""
+        if isinstance(message, dict) and isinstance(message.get("data"), str):
+            raw = message.get("data", "")
+            try:
+                payload = json.loads(raw)
+                if not isinstance(payload, dict):
+                    payload = {"data": payload}
+            except Exception:
+                payload = {"event": "rosbridge_raw", "raw": raw}
+        elif isinstance(message, dict):
+            payload = message
+        else:
+            payload = {"event": "rosbridge_raw", "raw": str(message)}
+
+        event_payload = self._extract_payload(payload)
+        event_name = event_payload.get("event") or event_payload.get("type") or event_payload.get("name") or "unknown"
+        event_code = self._coerce_int(event_payload.get("event_code") or event_payload.get("code"))
+        if event_code in (4, 1002, 4001) or self._is_arrival_event(self._event_name(event_payload), event_payload):
+            print(f"\n[WS NAV] event={event_name} code={event_code}", flush=True)
+
+        self.handle_callback_event(payload)
+        self._publish_system_events(payload)
 
     @staticmethod
     def _clone_value(value: Any) -> Any:
@@ -248,7 +290,7 @@ class FishBotAdapter(RobotAdapter):
         return None
 
     def _extract_current_pose(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        for key in ("current_pose", "robot_pose", "self_pose", "current_position", "pose", "position"):
+        for key in ("current_pose", "robot_pose", "self_pose", "current_position", "current", "pose", "position"):
             pose = self._normalize_pose(payload.get(key))
             if pose:
                 return pose
@@ -300,15 +342,60 @@ class FishBotAdapter(RobotAdapter):
     def _is_dock_complete_event(self, event_name: str, payload: Dict[str, Any]) -> bool:
         if payload.get("dock_complete") is True or payload.get("charging") is True and self._matches_event(event_name, ["dock", "charg"]):
             return True
-        return self._matches_event(event_name, ["dock_complete", "docking_complete", "charge_complete", "charging_complete", "docked", "充电完成", "回充完成"])
+        return self._matches_event(
+            event_name,
+            [
+                "dock_complete",
+                "docking_complete",
+                "dock_success",
+                "docking_success",
+                "charge_complete",
+                "charging_complete",
+                "charge_success",
+                "docked",
+                "充电完成",
+                "充电成功",
+                "回充完成",
+                "回充成功",
+            ],
+        )
 
     def _is_nav_started_event(self, event_name: str, payload: Dict[str, Any]) -> bool:
         if payload.get("started") is True:
             return True
-        return self._matches_event(event_name, ["nav_start", "nav_started", "navigation_started", "start_navigation", "开始导航"])
+        return self._matches_event(
+            event_name,
+            ["nav_start", "nav_started", "navigation_started", "start_navigation", "planner start", "开始导航"],
+        )
 
     def _is_nav_stop_event(self, event_name: str) -> bool:
         return self._matches_event(event_name, ["nav_stop", "navigation_stopped", "cancel", "abort", "stop"])
+
+    def _publish_system_events(self, event: Dict[str, Any]) -> None:
+        """Bridge adapter-side callback/ws events into the global EventBus."""
+        if not isinstance(event, dict):
+            return
+
+        payload = self._extract_payload(event)
+        event_name = self._event_name(payload)
+        event_code = self._coerce_int(payload.get("event_code") or payload.get("code"))
+
+        if self._is_arrival_event(event_name, payload) or event_code == 4:
+            global_event_bus.publish("nav_arrived", {"data": event})
+
+        if self._is_dock_complete_event(event_name, payload) or event_code == 4001:
+            global_event_bus.publish("dock_completed", {"data": event})
+
+        error_code = payload.get("error_code") or payload.get("err_code")
+        has_error_code = error_code not in (None, 0, "0", "")
+        failed_name = (
+            event_name == "nav_failed"
+            or "failed" in event_name
+            or "error" in event_name
+            or "澶辫触" in event_name
+        )
+        if has_error_code or failed_name:
+            global_event_bus.publish("action_failed", {"data": event})
 
     def _update_callback_state(self, **updates: Any) -> None:
         with self._callback_condition:
@@ -322,12 +409,14 @@ class FishBotAdapter(RobotAdapter):
 
         payload = self._extract_payload(event)
         event_name = self._event_name(payload)
+        event_code = self._coerce_int(payload.get("event_code") or payload.get("code"))
         timestamp = payload.get("timestamp") or time.time()
         map_id = self._coerce_int(payload.get("current_map_id") or payload.get("map_id"))
         waypoint_id = self._coerce_int(
             payload.get("waypoint_id")
             or payload.get("target_waypoint_id")
             or payload.get("goal_waypoint_id")
+            or payload.get("target_id")
         )
         waypoint_name = (
             payload.get("waypoint_name")
@@ -362,34 +451,34 @@ class FishBotAdapter(RobotAdapter):
             if charging is not None:
                 self._callback_state["charging"] = bool(charging)
 
-            if self._is_nav_started_event(event_name, payload):
+            if self._is_nav_started_event(event_name, payload) or event_code in (1, 1002):
                 self._callback_state["nav_started_at"] = timestamp
                 self._callback_state["nav_running"] = True
                 self._callback_state["dock_complete_at"] = None
 
-            if waypoint_id is not None and not self._is_arrival_event(event_name, payload):
+            if waypoint_id is not None and not (self._is_arrival_event(event_name, payload) or event_code == 4):
                 self._callback_state["target_waypoint_id"] = waypoint_id
                 self._callback_state["target_updated_at"] = timestamp
                 self._callback_state["nav_running"] = True
 
-            if waypoint_name and not self._is_arrival_event(event_name, payload):
+            if waypoint_name and not (self._is_arrival_event(event_name, payload) or event_code == 4):
                 self._callback_state["target_waypoint_name"] = waypoint_name
 
             if (current_pose or target_pose) and not (
-                self._is_arrival_event(event_name, payload)
-                or self._is_dock_complete_event(event_name, payload)
+                self._is_arrival_event(event_name, payload) or event_code == 4
+                or self._is_dock_complete_event(event_name, payload) or event_code == 4001
                 or self._is_nav_stop_event(event_name)
             ):
                 self._callback_state["nav_running"] = True
 
-            if self._is_arrival_event(event_name, payload):
+            if self._is_arrival_event(event_name, payload) or event_code == 4:
                 if waypoint_id is None:
                     waypoint_id = self._callback_state.get("target_waypoint_id")
                 self._callback_state["arrived_waypoint_id"] = waypoint_id
                 self._callback_state["arrived_at"] = timestamp
                 self._callback_state["nav_running"] = False
 
-            if self._is_dock_complete_event(event_name, payload):
+            if self._is_dock_complete_event(event_name, payload) or event_code == 4001:
                 self._callback_state["dock_complete_at"] = timestamp
                 self._callback_state["nav_running"] = False
                 self._callback_state["charging"] = True
@@ -404,12 +493,8 @@ class FishBotAdapter(RobotAdapter):
             return self._clone_value(self._callback_state)
 
     def _wait_for_callback(self, predicate, timeout: int) -> bool:
-        if not self._callback_enabled:
+        if not self._event_stream_enabled():
             return False
-
-        with self._callback_condition:
-            if not self._callback_state.get("event_count"):
-                return False
 
         deadline = time.time() + timeout
         with self._callback_condition:
@@ -420,6 +505,87 @@ class FishBotAdapter(RobotAdapter):
                 if remaining <= 0:
                     return False
                 self._callback_condition.wait(timeout=min(1.0, remaining))
+
+    def _has_live_callback_state(self) -> bool:
+        if not self._event_stream_enabled():
+            return False
+        with self._callback_condition:
+            return bool(self._callback_state.get("event_count"))
+
+    def _poll_until(self, predicate, timeout: int, interval: float = 1.0) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                if predicate():
+                    return True
+            except Exception:
+                pass
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            time.sleep(min(interval, remaining))
+        return False
+
+    def _poll_arrival_without_wait_api(self, waypoint_id: int, timeout: int) -> bool:
+        saw_navigation = False
+
+        def predicate() -> bool:
+            nonlocal saw_navigation
+
+            callback_state = self.get_callback_state()
+            if (
+                callback_state.get("arrived_waypoint_id") == waypoint_id
+                and callback_state.get("arrived_at")
+            ):
+                return True
+
+            nav_status = self.get_navigation_status()
+            nav_running = bool(nav_status.get("nav_running"))
+            if nav_running:
+                saw_navigation = True
+
+            if saw_navigation and not nav_running:
+                self._update_callback_state(
+                    nav_running=False,
+                    arrived_waypoint_id=waypoint_id,
+                    arrived_at=time.time(),
+                )
+                return True
+            return False
+
+        return self._poll_until(predicate, timeout)
+
+    def _poll_dock_complete_without_wait_api(self, timeout: int) -> bool:
+        saw_navigation = False
+
+        def predicate() -> bool:
+            nonlocal saw_navigation
+
+            callback_state = self.get_callback_state()
+            if callback_state.get("dock_complete_at"):
+                return True
+
+            status = self.get_status()
+            if status.nav_running:
+                saw_navigation = True
+
+            if status.charging:
+                self._update_callback_state(
+                    nav_running=False,
+                    charging=True,
+                    dock_complete_at=time.time(),
+                )
+                return True
+
+            if saw_navigation and not status.nav_running:
+                self._update_callback_state(
+                    nav_running=False,
+                    dock_complete_at=time.time(),
+                )
+                return True
+            return False
+
+        return self._poll_until(predicate, timeout)
     
     def disconnect(self) -> None:
         """断开连接"""
@@ -511,7 +677,7 @@ class FishBotAdapter(RobotAdapter):
                 self._update_callback_state(
                     current_map_id=map_id,
                     nav_running=True,
-                    nav_started_at=time.time(),
+                    nav_started_at=None,
                     target_waypoint_id=None,
                     target_waypoint_name=None,
                     target_pose=None,
@@ -520,8 +686,6 @@ class FishBotAdapter(RobotAdapter):
                     arrived_at=None,
                     dock_complete_at=None,
                 )
-                # 发送回调
-                self.send_callback("nav_start", {"map_id": map_id})
             return success
         except Exception as e:
             print(f"启动导航失败: {e}")
@@ -546,17 +710,11 @@ class FishBotAdapter(RobotAdapter):
             )
             success = result.get("code", -1) == 200
             if success:
-                waypoint = self.get_waypoint(waypoint_id)
                 self._update_callback_state(
                     nav_running=True,
                     target_waypoint_id=waypoint_id,
-                    target_waypoint_name=waypoint.name if waypoint else None,
-                    target_pose={
-                        "x": waypoint.x,
-                        "y": waypoint.y,
-                        "z": waypoint.z,
-                        "yaw": waypoint.yaw,
-                    } if waypoint else None,
+                    target_waypoint_name=None,
+                    target_pose=None,
                     target_updated_at=time.time(),
                     arrived_waypoint_id=None,
                     arrived_at=None,
@@ -674,61 +832,85 @@ class FishBotAdapter(RobotAdapter):
             pass
 
         callback_state = self.get_callback_state()
-        if callback_state.get("nav_running") is not None:
-            status.nav_running = bool(callback_state.get("nav_running"))
-        if isinstance(callback_state.get("current_pose"), dict):
-            status.current_pose = callback_state.get("current_pose")
-        if callback_state.get("charging") is not None:
-            status.charging = bool(callback_state.get("charging"))
+        if self._has_live_callback_state():
+            if callback_state.get("nav_running") is not None and self._should_prefer_callback_nav_state(callback_state):
+                status.nav_running = bool(callback_state.get("nav_running"))
+            if isinstance(callback_state.get("current_pose"), dict):
+                status.current_pose = callback_state.get("current_pose")
+            if callback_state.get("charging") is not None:
+                status.charging = bool(callback_state.get("charging"))
         
         return status
     
     def get_battery(self) -> Dict[str, Any]:
-        """获取电量信息 - 优先通过WebSocket ROS topic获取"""
-        # 尝试通过WebSocket获取电量（如果已连接）
-        if self.ws_client and self.ws_client.connected:
-            try:
-                # 订阅电池SOC topic
-                import time
-                battery_data = {"soc": None, "charging": False}
-                
-                def on_battery(msg):
-                    battery_data["soc"] = msg.get("data")
-                
-                def on_charging(msg):
-                    battery_data["charging"] = msg.get("data", False)
-                
-                # 订阅topic
-                self.ws_client.on_topic("/bms_soc", on_battery)
-                self.ws_client.on_topic("/bms_state", on_charging)
-                self.ws_client.subscribe("/bms_soc", "std_msgs/msg/Float32")
-                self.ws_client.subscribe("/bms_state", "std_msgs/msg/Bool")
-                
-                # 等待一秒接收数据
-                time.sleep(1)
-                
-                if battery_data["soc"] is not None:
-                    print(f"[Battery] Got from WebSocket: SOC={battery_data['soc']}%")
-                    return battery_data
-            except Exception as e:
-                print(f"[Battery] WebSocket failed: {e}")
+        """获取电量信息 - 快速判断充电状态"""
         
-        # 尝试HTTP API（如果存在）
+        import time
+        
+        # 策略：只需2-3个样本点快速判断
+        # 充电时的特征：平均电流 > 1.0A（过滤噪声和瞬时波动）
+        
+        if not (self.ws_client and self.ws_client.connected):
+            return {"soc": None, "charging": None, "error": "WebSocket not connected"}
+        
         try:
-            result = self._request("GET", "/api/nav/status/health")
-            print(f"[DEBUG] Battery API response: {result}")
-            data = result.get("data", {})
-            if isinstance(data, dict) and data.get("battery_level") is not None:
+            battery_data = {
+                "soc": None,
+                "state_samples": [],
+                "charging": None
+            }
+            
+            def on_bms_soc(msg):
+                try:
+                    soc = msg.get("data")
+                    if soc is not None:
+                        battery_data["soc"] = float(soc)
+                except (TypeError, ValueError, AttributeError):
+                    pass
+            
+            def on_bms_state(msg):
+                try:
+                    state = msg.get("data")
+                    if state is not None:
+                        battery_data["state_samples"].append(float(state))
+                        # 只保留最后 5 个样本
+                        if len(battery_data["state_samples"]) > 5:
+                            battery_data["state_samples"].pop(0)
+                except (TypeError, ValueError, AttributeError):
+                    pass
+            
+            self.ws_client.on_topic("/bms_soc", on_bms_soc)
+            self.ws_client.on_topic("/bms_state", on_bms_state)
+            
+            # 快速采样：只需 2-3 个点（约 200-300ms）
+            print("[Battery] 采样电流数据...")
+            for i in range(30):  # 最多 3 秒的等待
+                # 只要有 SOC 和至少 2 个电流点就返回
+                if battery_data["soc"] is not None and len(battery_data["state_samples"]) >= 2:
+                    break
+                time.sleep(0.1)
+            
+            if battery_data["soc"] is not None and battery_data["state_samples"]:
+                # 计算平均电流
+                avg_current = sum(battery_data["state_samples"]) / len(battery_data["state_samples"])
+                
+                # 【改进】：充电判断标准更宽松
+                # 只要平均电流 > 1.0A 就认为在充电
+                # 这样能避免被小的噪声和波动影响
+                battery_data["charging"] = avg_current > 1.0
+                
+                print(f"[Battery] SOC: {battery_data['soc']:.1f}%, 电流: {avg_current:.1f}A, 充电: {battery_data['charging']}")
+                
                 return {
-                    "soc": data.get("battery_level"),
-                    "charging": data.get("charging", False)
+                    "soc": battery_data["soc"],
+                    "charging": battery_data["charging"]
                 }
+            
+            return {"soc": None, "charging": None, "error": "Incomplete battery data"}
+                    
         except Exception as e:
-            print(f"[DEBUG] Battery API error: {e}")
-        
-        # 无法获取电量
-        print("[Battery] Cannot get battery info - API not available")
-        return {"soc": None, "charging": False, "error": "Battery API not available"}
+            print(f"[Battery] 异常: {e}")
+            return {"soc": None, "charging": None, "error": f"Exception: {e}"}
     
     # ========== 动作操作 ==========
     def motion_stand(self) -> bool:
@@ -777,9 +959,116 @@ class FishBotAdapter(RobotAdapter):
         except Exception as e:
             print(f"[Motion] Lie down failed: {e}")
             return False
+
+    # ========== Mission Executor兼容接口 ==========
+    def prepare_for_movement(self) -> bool:
+        """MissionExecutor 兼容：统一准备移动动作。"""
+        return self.motion_stand()
+
+    def _ensure_navigation_started_for_mission(self, map_id: Optional[int]) -> bool:
+        """Best-effort: ensure nav service is started on a map before goto_waypoint."""
+        nav_running = False
+        nav_map_id = None
+        try:
+            nav_status = self.get_navigation_status()
+        except Exception:
+            nav_status = {}
+        if isinstance(nav_status, dict):
+            nav_running = bool(nav_status.get("nav_running"))
+            nav_map_id = nav_status.get("current_map_id") or nav_status.get("map_id")
+
+        if nav_map_id is not None:
+            try:
+                nav_map_id = int(nav_map_id)
+            except (TypeError, ValueError):
+                pass
+
+        if nav_running and (map_id is None or nav_map_id == map_id):
+            return True
+
+        if map_id is None:
+            map_info = self.resolve_current_map()
+            if map_info:
+                map_id = map_info.id
+
+        if map_id is None:
+            return False
+
+        try:
+            map_id = int(map_id)
+        except (TypeError, ValueError):
+            return False
+
+        if not self.start_navigation(map_id):
+            return False
+        return True
+
+    def navigate_to(self, target: str) -> bool:
+        """MissionExecutor 兼容：按目标名称导航到路点。"""
+        if not target:
+            return False
+
+        lowered = str(target).lower()
+        if any(keyword in lowered or keyword in target for keyword in ["回充", "充电", "回桩", "dock"]):
+            return self.execute_docking_async()
+
+        map_info = self.resolve_current_map()
+        if map_info:
+            self._current_map_id = map_info.id
+
+        if self._current_map_id is None:
+            return False
+
+        if not self._ensure_navigation_started_for_mission(self._current_map_id):
+            return False
+
+        try:
+            waypoints = self.list_waypoints(self._current_map_id)
+        except Exception:
+            return False
+
+        matched = None
+        for wp in waypoints:
+            if wp.name == target:
+                matched = wp
+                break
+        if matched is None:
+            for wp in waypoints:
+                if target in wp.name or wp.name in target:
+                    matched = wp
+                    break
+        if matched is None:
+            return False
+        return self.goto_waypoint(matched.id)
+
+    def execute_docking(self) -> bool:
+        """MissionExecutor 兼容：执行回充动作。"""
+        return self.goto_dock(self._current_map_id)
+
+    def execute_docking_async(self) -> bool:
+        """非阻塞回充：只下发指令并立即返回。"""
+        return self.goto_dock(self._current_map_id)
+
+    def get_basic_status(self) -> Dict[str, Any]:
+        """MissionExecutor 兼容：返回基础状态。"""
+        status = self.get_status()
+        return {
+            "nav_running": status.nav_running,
+            "charging": status.charging,
+            "battery_soc": status.battery_soc,
+            "current_pose": status.current_pose,
+        }
     
-    def set_light(self, code: int) -> bool:
+    def set_light(self, code: Union[int, str]) -> bool:
         """设置灯光 - 通过WebSocket (Rosbridge)"""
+        if isinstance(code, str):
+            color_map = {
+                "red": 11,
+                "yellow": 12,
+                "green": 13,
+                "off": 0,
+            }
+            code = color_map.get(code.lower(), 11)
         try:
             # 优先使用WebSocket
             if self.ws_client and self.ws_client.connected:
@@ -837,48 +1126,18 @@ class FishBotAdapter(RobotAdapter):
             timeout,
         ):
             return True
-        try:
-            result = self._request(
-                "POST",
-                "/api/nav/events/wait_arrival",
-                data={"waypoint_id": waypoint_id, "timeout": timeout}
-            )
-            data = result.get("data", {})
-            success = data.get("arrived", False) if isinstance(data, dict) else False
-            if success:
-                self._update_callback_state(
-                    nav_running=False,
-                    arrived_waypoint_id=waypoint_id,
-                    arrived_at=time.time(),
-                )
-            return success
-        except Exception:
-            return self._wait_for_callback(
-                lambda state: state.get("arrived_waypoint_id") == waypoint_id and bool(state.get("arrived_at")),
-                timeout,
-            )
+        return self._poll_arrival_without_wait_api(waypoint_id, timeout)
 
     def wait_dock_complete(self, timeout: int = 300) -> bool:
-        """等待回充完成"""
-        if self._wait_for_callback(lambda state: bool(state.get("dock_complete_at")), timeout):
+        """兼容旧接口：非阻塞模式下仅做一次状态读取，不做轮询等待。"""
+        state = self.get_callback_state()
+        if state.get("dock_complete_at"):
             return True
         try:
-            result = self._request(
-                "POST",
-                "/api/nav/events/wait_dock_complete",
-                data={"timeout": timeout}
-            )
-            data = result.get("data", {})
-            success = data.get("result", False) if isinstance(data, dict) else False
-            if success:
-                self._update_callback_state(
-                    nav_running=False,
-                    charging=True,
-                    dock_complete_at=time.time(),
-                )
-            return success
+            status = self.get_status()
+            return bool(getattr(status, "charging", False))
         except Exception:
-            return self._wait_for_callback(lambda state: bool(state.get("dock_complete_at")), timeout)
+            return False
     
     def goto_dock(self, map_id: int = None) -> bool:
         """前往回充点
@@ -972,12 +1231,13 @@ class FishBotAdapter(RobotAdapter):
         if callback_state.get("current_map_id") is not None:
             status["current_map_id"] = callback_state.get("current_map_id")
             status["map_id"] = callback_state.get("current_map_id")
-        if callback_state.get("nav_running") is not None:
-            status["nav_running"] = bool(callback_state.get("nav_running"))
-        if isinstance(callback_state.get("current_pose"), dict):
-            status["current_pose"] = callback_state.get("current_pose")
-        if isinstance(callback_state.get("target_pose"), dict):
-            status["target_pose"] = callback_state.get("target_pose")
+        if self._has_live_callback_state():
+            if callback_state.get("nav_running") is not None and self._should_prefer_callback_nav_state(callback_state):
+                status["nav_running"] = bool(callback_state.get("nav_running"))
+            if isinstance(callback_state.get("current_pose"), dict):
+                status["current_pose"] = callback_state.get("current_pose")
+            if isinstance(callback_state.get("target_pose"), dict):
+                status["target_pose"] = callback_state.get("target_pose")
         if callback_state.get("target_waypoint_id") is not None:
             status["target_waypoint_id"] = callback_state.get("target_waypoint_id")
         if callback_state.get("target_waypoint_name"):

@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import sys
 import signal
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -18,6 +19,8 @@ from fishmindos.brain.llm_brain import LLMBrain
 from fishmindos.interaction import InteractionManager
 from fishmindos.interaction.callback_receiver import CallbackReceiver
 from fishmindos.config import get_config
+from fishmindos.world import WorldResolver
+from fishmindos.soul import Soul
 
 
 class FishMindOS:
@@ -33,6 +36,8 @@ class FishMindOS:
         self.brain: Optional[LLMBrain] = None
         self.interaction: Optional[InteractionManager] = None
         self.callback_receiver: Optional[CallbackReceiver] = None
+        self.world_resolver: Optional[WorldResolver] = None
+        self.soul: Optional[Soul] = None
         self._running = False
 
     def _apply_callback_config(self, config) -> Optional[str]:
@@ -113,6 +118,92 @@ class FishMindOS:
 
         if callback_state.get("dock_complete_at"):
             session["current_location"] = "回充点"
+
+    def _initialize_world(self, config) -> Optional[WorldResolver]:
+        world_config = getattr(config, "world", None)
+        if world_config is None or not world_config.enabled:
+            self.world_resolver = None
+            return None
+
+        world_path = Path(world_config.path)
+        if not world_path.is_absolute():
+            world_path = Path.cwd() / world_path
+
+        self.world_resolver = WorldResolver.from_path(
+            world_path,
+            adapter=self.adapter,
+            soul=self.soul,
+            auto_switch_map=world_config.auto_switch_map,
+            prefer_current_map=world_config.prefer_current_map,
+            adapter_fallback=world_config.adapter_fallback,
+        )
+        return self.world_resolver
+
+    def _initialize_soul(self, config) -> Optional[Soul]:
+        soul_config = getattr(config, "soul", None)
+        if soul_config is None or not soul_config.enabled:
+            self.soul = None
+            return None
+
+        soul_path = Path(soul_config.path)
+        if not soul_path.is_absolute():
+            soul_path = Path.cwd() / soul_path
+
+        self.soul = Soul.from_path(str(soul_path), max_memories=soul_config.max_memories)
+        return self.soul
+
+    def _sync_world_to_brain(self) -> None:
+        if not self.brain:
+            return
+
+        if self.world_resolver is None:
+            self.brain.session_context.pop("world", None)
+            self.brain.session_context.pop("world_model", None)
+            self.brain.session_context["world_enabled"] = False
+            self.brain.session_context.pop("world_summary", None)
+            self.brain.session_context.pop("world_prompt", None)
+            self.brain.session_context.pop("world_name", None)
+            self.brain.session_context.pop("world_default_map", None)
+            self.brain.session_context.pop("world_known_locations", None)
+            self.brain.session_context.pop("world_adapter_fallback", None)
+            return
+
+        self.brain.session_context["world"] = self.world_resolver
+        self.brain.session_context["world_model"] = self.world_resolver
+        self.brain.session_context["world_enabled"] = True
+        self.brain.session_context["world_summary"] = self.world_resolver.describe()
+        self.brain.session_context["world_prompt"] = self.world_resolver.describe_for_prompt(limit=50)
+        self.brain.session_context["world_name"] = getattr(self.world_resolver.world, "name", "default")
+        self.brain.session_context["world_default_map"] = (
+            self.world_resolver.world.default_map_name
+            or self.world_resolver.world.default_map_id
+        )
+        self.brain.session_context["world_known_locations"] = self.world_resolver.list_known_locations()
+        self.brain.session_context["world_adapter_fallback"] = self.world_resolver.adapter_fallback
+
+    def _sync_soul_to_brain(self) -> None:
+        if not self.brain:
+            return
+
+        if self.soul is None:
+            if self.world_resolver and hasattr(self.world_resolver, "set_soul"):
+                self.world_resolver.set_soul(None)
+            self.brain.session_context.pop("soul", None)
+            self.brain.session_context["soul_enabled"] = False
+            self.brain.session_context.pop("soul_summary", None)
+            self.brain.session_context.pop("soul_prompt", None)
+            self.brain.session_context.pop("soul_preferences", None)
+            return
+
+        if self.world_resolver and hasattr(self.world_resolver, "set_soul"):
+            self.world_resolver.set_soul(self.soul)
+        self.brain.session_context["soul"] = self.soul
+        self.brain.session_context["soul_enabled"] = True
+        self.brain.session_context["soul_summary"] = self.soul.describe()
+        self.brain.session_context["soul_prompt"] = self.soul.describe_for_prompt()
+        self.brain.session_context["soul_preferences"] = {
+            key: pref.value for key, pref in self.soul.state.preferences.items()
+        }
 
     def _handle_callback_event(self, record) -> None:
         event = record.get("event", {})
@@ -246,6 +337,12 @@ class FishMindOS:
                 print("   Warning: 所有连接都失败，将以离线模式运行")
             
             # 4. Initialize brain (只初始化一次LLM provider)
+            world_resolver = self._initialize_world(config)
+            if world_resolver:
+                print(f"   World: OK {config.world.path} ({world_resolver.describe()})")
+            soul = self._initialize_soul(config)
+            if soul:
+                print(f"   Soul: OK {config.soul.path} ({soul.describe()})")
             print("3. Initializing brain...")
             
             # Create LLM provider (唯一初始化点)
@@ -266,6 +363,8 @@ class FishMindOS:
             
             # Create LLM brain (传入已初始化的provider，避免重复初始化)
             self.brain = LLMBrain(self.registry, self.adapter, llm_provider)
+            self._sync_world_to_brain()
+            self._sync_soul_to_brain()
             self._apply_callback_config(config)
             self._sync_callback_state_to_brain()
             

@@ -11,6 +11,7 @@ from fishmindos.core.models import (
     SkillResult,
     ExecutionEvent,
 )
+from fishmindos.core.event_bus import EventBus, global_event_bus
 
 __all__ = [
     "TaskStatus",
@@ -20,4 +21,6 @@ __all__ = [
     "SkillContext",
     "SkillResult",
     "ExecutionEvent",
+    "EventBus",
+    "global_event_bus",
 ]

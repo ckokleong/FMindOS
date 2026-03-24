@@ -19,6 +19,14 @@ from fishmindos.adapters import (
     create_fishbot_adapter,
     FishBotAdapter,
 )
+from fishmindos.world import (
+    WorldResolver,
+    WorldStore,
+)
+from fishmindos.soul import (
+    Soul,
+    SoulStore,
+)
 
 __all__ = [
     # 技能系统
@@ -30,6 +38,10 @@ __all__ = [
     # 适配器
     "create_fishbot_adapter",
     "FishBotAdapter",
+    "WorldResolver",
+    "WorldStore",
+    "Soul",
+    "SoulStore",
 ]
 
 __version__ = "2.0.0"

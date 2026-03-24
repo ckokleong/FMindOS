@@ -1,11 +1,11 @@
 """
 FishMindOS Agent 提示词管理器
-加载和整合 Agent 定义文档，生成系统提示词
+加载框架默认文档，并按需叠加项目实例 profile 文档。
 """
 
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
-import json
 
 
 class AgentPromptManager:
@@ -15,7 +15,7 @@ class AgentPromptManager:
     生成完整的系统提示词
     """
     
-    def __init__(self, docs_dir: str = None):
+    def __init__(self, docs_dir: str = None, profile_name: Optional[str] = None):
         """
         初始化提示词管理器
         
@@ -23,13 +23,43 @@ class AgentPromptManager:
             docs_dir: 文档目录路径，默认使用项目根目录下的docs
         """
         if docs_dir is None:
-            # 默认路径：项目根目录下的docs
             self.docs_dir = Path(__file__).parent.parent.parent / "docs"
         else:
             self.docs_dir = Path(docs_dir)
-        
+
+        self.profile_name = self._resolve_profile_name(profile_name)
+        self.profile_dir = (
+            self.docs_dir / "profiles" / self.profile_name
+            if self.profile_name
+            else None
+        )
         self._cache: Dict[str, str] = {}
+        self._sources: Dict[str, str] = {}
         self._load_all_docs()
+
+    def _resolve_profile_name(self, explicit_profile: Optional[str]) -> Optional[str]:
+        if explicit_profile is not None:
+            value = str(explicit_profile).strip()
+            return value or None
+
+        env_profile = os.getenv("FISHMIND_APP_PROMPT_PROFILE") or os.getenv("FISHMIND_PROMPT_PROFILE")
+        if env_profile:
+            value = str(env_profile).strip()
+            if value:
+                return value
+
+        try:
+            from fishmindos.config import get_config
+
+            config = get_config()
+            value = str(getattr(config.app, "prompt_profile", "") or "").strip()
+            return value or None
+        except Exception:
+            return None
+
+    def _read_text(self, path: Path) -> str:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
     
     def _load_all_docs(self):
         """加载所有文档"""
@@ -38,20 +68,35 @@ class AgentPromptManager:
             "agent": "agent.md",
             "tools": "tools.md",
             "prompt": "prompt.md",  # 新增：系统提示词
+            "soul": "Soul.md",
         }
         
         for key, filename in doc_files.items():
-            filepath = self.docs_dir / filename
-            if filepath.exists():
+            base_path = self.docs_dir / filename
+            profile_path = self.profile_dir / filename if self.profile_dir else None
+
+            text = ""
+            source = ""
+
+            if base_path.exists():
                 try:
-                    with open(filepath, 'r', encoding='utf-8') as f:
-                        self._cache[key] = f.read()
+                    text = self._read_text(base_path)
+                    source = str(base_path)
                 except Exception as e:
-                    print(f"加载文档失败 {filepath}: {e}")
-                    self._cache[key] = ""
-            else:
-                print(f"文档不存在: {filepath}")
-                self._cache[key] = ""
+                    print(f"加载文档失败 {base_path}: {e}")
+
+            if profile_path and profile_path.exists():
+                try:
+                    text = self._read_text(profile_path)
+                    source = str(profile_path)
+                except Exception as e:
+                    print(f"加载 profile 文档失败 {profile_path}: {e}")
+
+            if not text and not base_path.exists() and not (profile_path and profile_path.exists()):
+                print(f"文档不存在: {base_path}")
+
+            self._cache[key] = text
+            self._sources[key] = source
     
     def get_identity(self) -> str:
         """获取身份定义"""
@@ -68,6 +113,10 @@ class AgentPromptManager:
     def get_prompt(self) -> str:
         """获取系统提示词"""
         return self._cache.get("prompt", "")
+
+    def get_soul(self) -> str:
+        """获取 Soul 架构定义"""
+        return self._cache.get("soul", "")
     
     def generate_system_prompt(
         self,
@@ -156,6 +205,7 @@ class AgentPromptManager:
     def reload_docs(self):
         """重新加载所有文档"""
         self._cache.clear()
+        self._sources.clear()
         self._load_all_docs()
         print("OK 文档已重新加载")
     
@@ -170,6 +220,10 @@ class AgentPromptManager:
             key: len(content) 
             for key, content in self._cache.items()
         }
+
+    def get_doc_sources(self) -> Dict[str, str]:
+        """返回每份文档当前实际来源路径。"""
+        return dict(self._sources)
     
     def validate_docs(self) -> List[str]:
         """
@@ -189,9 +243,9 @@ class AgentPromptManager:
         return missing
 
 
-def create_prompt_manager(docs_dir: str = None) -> AgentPromptManager:
+def create_prompt_manager(docs_dir: str = None, profile_name: Optional[str] = None) -> AgentPromptManager:
     """工厂函数：创建提示词管理器"""
-    return AgentPromptManager(docs_dir)
+    return AgentPromptManager(docs_dir, profile_name=profile_name)
 
 
 # 使用示例

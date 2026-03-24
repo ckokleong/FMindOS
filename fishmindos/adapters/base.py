@@ -133,6 +133,21 @@ class RobotAdapter(ABC):
     def cancel_task(self) -> bool:
         """取消当前任务"""
         pass
+
+    # ========== 非阻塞任务动作 ==========
+    def navigate_to(self, target: str) -> bool:
+        """发送导航到语义目标的动作，默认由具体适配器实现。"""
+        return False
+
+    def execute_docking_async(self) -> bool:
+        """发送回充动作（非阻塞）。默认回退到 execute_docking。"""
+        docking_fn = getattr(self, "execute_docking", None)
+        if callable(docking_fn):
+            try:
+                return bool(docking_fn())
+            except Exception:
+                return False
+        return False
     
     # ========== 回调管理 ==========
     def set_callback_url(self, url: str, enable: bool = True) -> bool:
@@ -183,7 +198,7 @@ class RobotAdapter(ABC):
                 method='POST'
             )
             
-            with urllib.request.urlopen(req, timeout=5) as response:
+            with urllib.request.urlopen(req, timeout=1.0) as response:
                 return response.status == 200
         except Exception as e:
             print(f"[Adapter] 回调发送失败: {e}")

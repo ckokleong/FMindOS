@@ -10,6 +10,9 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, List, Optional
 
+from fishmindos.config import get_config
+from fishmindos.core.event_bus import global_event_bus
+
 
 CallbackHandler = Callable[[Dict[str, Any]], None]
 
@@ -49,11 +52,14 @@ class CallbackReceiver:
 
             def _write_json(self, status: int, payload: Dict[str, Any]) -> None:
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                try:
+                    self.send_response(status)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                except OSError:
+                    return
 
             def do_GET(self) -> None:  # noqa: N802
                 if self.path == "/":
@@ -142,11 +148,72 @@ class CallbackReceiver:
             try:
                 handler(record)
             except Exception as exc:
-                print(f"[Callback] handler failed: {exc}")
+                print(f"\n[Callback] handler failed: {exc}", flush=True)
 
         event_name = event.get("event") or event.get("type") or event.get("name") or "unknown"
-        print(
-            f"[Callback] count={count} path={path} remote={remote_addr} "
-            f"event={event_name} payload={json.dumps(event, ensure_ascii=False)}"
-        )
+        debug_enabled = False
+        try:
+            debug_enabled = bool(getattr(get_config().app, "debug", False))
+        except Exception:
+            debug_enabled = False
+        if debug_enabled:
+            print(
+                f"\n[Callback] count={count} path={path} remote={remote_addr} "
+                f"event={event_name} payload={json.dumps(event, ensure_ascii=False)}",
+                flush=True,
+            )
+        self._publish_system_events(event)
         return record
+
+    def _publish_system_events(self, event: Dict[str, Any]) -> None:
+        """Translate hardware callback payload to system-level EventBus events."""
+        if not isinstance(event, dict):
+            return
+
+        payload = dict(event)
+        nested = payload.get("data")
+        if isinstance(nested, dict):
+            merged = dict(nested)
+            for key, value in payload.items():
+                if key != "data" and key not in merged:
+                    merged[key] = value
+            payload = merged
+
+        event_name_raw = (
+            payload.get("event")
+            or payload.get("event_name")
+            or payload.get("type")
+            or payload.get("name")
+            or ""
+        )
+        event_name = str(event_name_raw).strip().lower()
+        event_code = payload.get("event_code") or payload.get("code")
+        try:
+            event_code = int(event_code) if event_code is not None else None
+        except (TypeError, ValueError):
+            event_code = None
+
+        if event_code == 4 or event_name in {"arrived", "到达路点"} or "arrived" in event_name or "到达" in event_name:
+            global_event_bus.publish("nav_arrived", {"data": event})
+
+        if (
+            event_code == 4001
+            or
+            event_name in {"dock_complete", "回充完成"}
+            or "dock_complete" in event_name
+            or "dock_success" in event_name
+            or "回充完成" in event_name
+            or "充电完成" in event_name
+        ):
+            global_event_bus.publish("dock_completed", {"data": event})
+
+        error_code = payload.get("error_code") or payload.get("err_code")
+        has_error_code = error_code not in (None, 0, "0", "")
+        failed_name = (
+            event_name == "nav_failed"
+            or "failed" in event_name
+            or "error" in event_name
+            or "失败" in event_name
+        )
+        if has_error_code or failed_name:
+            global_event_bus.publish("action_failed", {"data": event})
