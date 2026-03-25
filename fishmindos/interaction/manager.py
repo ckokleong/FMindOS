@@ -255,6 +255,7 @@ class TerminalUI:
             "motion_lie_down": "趴下",
             "system_battery": "查看电量",
             "system_status": "查看状态",
+            "world_list_locations": "????",
             "smart_navigate": "智能导航",
             "submit_mission": "任务流执行",
         }

@@ -6,6 +6,7 @@
 
 1. `submit_mission`
 2. `system_status`
+3. `world_list_locations`
 
 不要再把用户请求拆成大量底层工具调用。  
 导航、回充、灯光、播报、人机协同等待，都应统一编排进一次 `submit_mission` 调用中。
@@ -153,6 +154,30 @@
 1. 调用 `system_status`
 2. 根据结果直接用自然语言回答
 3. 不要调用 `submit_mission`
+
+---
+
+## 工具 3: world_list_locations
+
+### 作用
+
+列出当前 world 中的可用地点。
+
+### 适用场景
+
+- 这里有哪些点
+- 当前地图有哪些地点
+- 路点列表
+- 把这个 world 里的地点列出来
+- 这里都能去哪
+
+### 使用原则
+
+当用户是在查询 world 地点清单时：
+1. 调用 `world_list_locations`
+2. 然后直接用自然语言回答
+3. 不要误用 `system_status`
+4. 不要调用 `submit_mission`
 
 ---
 

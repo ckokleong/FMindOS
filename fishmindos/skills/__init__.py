@@ -38,6 +38,7 @@ from fishmindos.skills.builtin.system import (
     GetStatusSkill,
     GetChargingStatusSkill,
     GetPoseSkill,
+    ListWorldLocationsSkill,
     WaitEventSkill,
 )
 from fishmindos.skills.builtin.callback import (
@@ -93,6 +94,7 @@ __all__ = [
     "GetStatusSkill",
     "GetChargingStatusSkill",
     "GetPoseSkill",
+    "ListWorldLocationsSkill",
     "WaitEventSkill",
     "SetCallbackSkill",
     "GetCallbackStatusSkill",
@@ -140,6 +142,7 @@ def create_default_registry() -> SkillRegistry:
     registry.register(GetStatusSkill())
     registry.register(GetChargingStatusSkill())
     registry.register(GetPoseSkill())
+    registry.register(ListWorldLocationsSkill())
     registry.register(WaitEventSkill())
     registry.register(SetCallbackSkill())
     registry.register(GetCallbackStatusSkill())
@@ -153,7 +156,7 @@ def create_default_registry() -> SkillRegistry:
     registry.register(ItemPlaceSkill())
     
     # 仅保留高层编排入口给 LLM，其他旧技能仍可内部调用但不对 LLM 暴露
-    llm_visible = {"submit_mission", "system_status"}
+    llm_visible = {"submit_mission", "system_status", "world_list_locations"}
     for skill_name in registry.list_all():
         skill = registry.get(skill_name)
         if skill is not None:

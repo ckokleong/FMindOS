@@ -754,6 +754,8 @@ class LLMBrain:
                         self._set_current_intent_type("mission")
                     elif "system_status" in round_tool_names:
                         self._set_current_intent_type("status")
+                    elif "world_list_locations" in round_tool_names:
+                        self._set_current_intent_type("chat")
 
                     if self._is_simple_status_query(user_input):
                         status_steps = [step for step in round_steps if step.get("skill") == "system_status"]
@@ -872,6 +874,10 @@ class LLMBrain:
                             executed_any_step = True
 
                             if function_name == "system_status" and self._is_simple_status_query(user_input):
+                                status_query_completed = True
+                                if success and result_content:
+                                    final_text = result_content
+                            elif function_name == "world_list_locations":
                                 status_query_completed = True
                                 if success and result_content:
                                     final_text = result_content
@@ -1225,6 +1231,83 @@ class LLMBrain:
         if world_summary:
             return f"当前 world: {world_summary}"
         return ""
+
+    def _is_world_locations_query(self, user_input: str) -> bool:
+        text = str(user_input or "").strip()
+        if not text:
+            return False
+
+        query_markers = [
+            "有哪些点",
+            "有哪些地点",
+            "有哪些路点",
+            "这里有哪些点",
+            "这里有哪些地点",
+            "这里有什么点",
+            "这里有什么地点",
+            "可用地点",
+            "地点列表",
+            "路点列表",
+            "列出地点",
+            "列出路点",
+        ]
+        return any(marker in text for marker in query_markers)
+
+    def _format_world_locations_response(self) -> str:
+        resolver = self.session_context.get("world") or self.session_context.get("world_model")
+        if not resolver or not hasattr(resolver, "world"):
+            return "当前未启用 world，无法列出语义地点。"
+
+        world = getattr(resolver, "world", None)
+        locations = list(getattr(world, "locations", []) or [])
+        if not locations:
+            return "当前 world 里还没有配置地点。"
+
+        current_map = self.session_context.get("current_map") or {}
+        current_map_id = current_map.get("id") if isinstance(current_map, dict) else None
+        current_map_name = current_map.get("name") if isinstance(current_map, dict) else None
+
+        filtered = locations
+        if current_map_id is not None or current_map_name:
+            current_map_name_text = str(current_map_name or "").strip()
+            filtered = [
+                item
+                for item in locations
+                if (
+                    current_map_id is not None
+                    and getattr(item, "map_id", None) == current_map_id
+                )
+                or (
+                    current_map_name_text
+                    and str(getattr(item, "map_name", "") or "").strip() == current_map_name_text
+                )
+                or (
+                    getattr(item, "map_id", None) is None
+                    and not getattr(item, "map_name", None)
+                )
+            ]
+            if not filtered:
+                filtered = locations
+
+        lines = []
+        for item in filtered:
+            label = getattr(item, "name", "未命名地点")
+            details = []
+            description = str(getattr(item, "description", "") or "").strip()
+            if description:
+                details.append(description)
+            aliases = [alias for alias in (getattr(item, "aliases", None) or []) if alias]
+            if aliases:
+                details.append(f"别名: {'/'.join(aliases[:3])}")
+            if details:
+                label = f"{label}（{'；'.join(details)}）"
+            lines.append(label)
+
+        map_label = str(current_map_name or getattr(world, "default_map_name", None) or "当前 world").strip()
+        return (
+            f"{map_label} 可用地点有 {len(filtered)} 个：\n"
+            + "\n".join(f"- {line}" for line in lines)
+        )
 
     def _get_soul_prompt_info(self) -> str:
         soul = self.session_context.get("soul")
@@ -2084,6 +2167,7 @@ class LLMBrain:
             "【一站式规划铁律】：只要信息充足，你必须将所有需要的物理动作（移动、亮灯、播报、等待）一次性全部打包进 submit_mission 的 tasks 数组中。禁止自己一步一步拆解工具调用。\n"
             "【停止导航规则】：当用户要求关闭导航、停止导航、取消当前导航时，使用 submit_mission，并在 tasks 中生成 {\"action\": \"stop_nav\"}。这不是状态查询。\n"
             "【状态查询规则】：纯状态、电量、充电查询时，只允许调用 system_status，然后直接文字回复。\n"
+            "【地点查询规则】：当用户询问‘这里有哪些点/有哪些地点/路点列表/当前地图有哪些位置’时，调用 world_list_locations，不要误用 system_status。\n"
             "【闲聊规则】：身份介绍、解释说明、普通闲聊时，不要调用任何工具。"
         )
 
@@ -2125,7 +2209,7 @@ class LLMBrain:
 
     def _get_available_tools(self, user_input: str) -> List[Dict[str, Any]]:
         """Expose both top-level tools and let the main LLM choose between text reply and tool call."""
-        allowed_names = {"submit_mission", "system_status"}
+        allowed_names = {"submit_mission", "system_status", "world_list_locations"}
         return [
             tool
             for tool in self.registry.get_tools()

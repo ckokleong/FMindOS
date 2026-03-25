@@ -314,3 +314,104 @@ class WaitEventSkill(Skill):
             return SkillResult(False, "等待回充超时")
         
         return SkillResult(False, f"未知事件类型: {event_type}")
+
+
+
+class ListWorldLocationsSkill(Skill):
+    """List known places from the current semantic world."""
+
+    name = "world_list_locations"
+    description = "???? world ??????????????????/??/????"
+    category = "system"
+
+    parameters = {
+        "type": "object",
+        "properties": {
+            "current_map_only": {
+                "type": "boolean",
+                "description": "??????????????? true?",
+            },
+            "include_details": {
+                "type": "boolean",
+                "description": "???????????? true?",
+            },
+        },
+        "required": [],
+    }
+
+    def execute(self, params: Dict[str, Any], context: SkillContext) -> SkillResult:
+        resolver = context.get("world") or context.get("world_model") or getattr(context, "world_model", None)
+        if not resolver or not hasattr(resolver, "world"):
+            return SkillResult(False, "????? world????????")
+
+        world = getattr(resolver, "world", None)
+        locations = list(getattr(world, "locations", []) or [])
+        if not locations:
+            return SkillResult(False, "?? world ?????????")
+
+        current_map_only = bool(params.get("current_map_only", True))
+        include_details = bool(params.get("include_details", True))
+
+        current_map = context.get("current_map") or {}
+        current_map_id = current_map.get("id") if isinstance(current_map, dict) else None
+        current_map_name = current_map.get("name") if isinstance(current_map, dict) else None
+
+        filtered = locations
+        if current_map_only and (current_map_id is not None or current_map_name):
+            current_map_name_text = str(current_map_name or "").strip()
+            filtered = [
+                item
+                for item in locations
+                if (
+                    current_map_id is not None
+                    and getattr(item, "map_id", None) == current_map_id
+                )
+                or (
+                    current_map_name_text
+                    and str(getattr(item, "map_name", "") or "").strip() == current_map_name_text
+                )
+                or (
+                    getattr(item, "map_id", None) is None
+                    and not getattr(item, "map_name", None)
+                )
+            ]
+            if not filtered:
+                filtered = locations
+
+        items = []
+        lines = []
+        for item in filtered:
+            name = str(getattr(item, "name", "") or "").strip() or "?????"
+            description = str(getattr(item, "description", "") or "").strip()
+            aliases = [alias for alias in (getattr(item, "aliases", None) or []) if alias]
+            items.append(
+                {
+                    "name": name,
+                    "map_name": getattr(item, "map_name", None),
+                    "map_id": getattr(item, "map_id", None),
+                    "waypoint_name": getattr(item, "waypoint_name", None),
+                    "waypoint_id": getattr(item, "waypoint_id", None),
+                    "location_type": getattr(item, "location_type", "waypoint"),
+                    "description": description,
+                    "aliases": aliases,
+                }
+            )
+
+            label = name
+            if include_details:
+                detail_parts = []
+                if description:
+                    detail_parts.append(description)
+                if aliases:
+                    detail_parts.append(f"??: {'/'.join(aliases[:3])}")
+                if detail_parts:
+                    label = f"{name}?{'?'.join(detail_parts)}?"
+            lines.append(f"- {label}")
+
+        map_label = str(
+            current_map_name
+            or getattr(world, "default_map_name", None)
+            or getattr(world, "name", "?? world")
+        ).strip()
+        message = f"{map_label} ????? {len(filtered)} ??\n" + "\n".join(lines)
+        return SkillResult(True, message, {"locations": items, "count": len(filtered)})
