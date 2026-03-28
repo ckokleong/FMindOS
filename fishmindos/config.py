@@ -24,22 +24,22 @@ class LLMConfig:
 @dataclass
 class NavServerConfig:
     """导航服务器配置"""
-    host: str = "192.168.123.100"
-    port: int = 8888
+    host: str = "192.168.123.161"
+    port: int = 8081
 
 
 @dataclass
 class NavAppConfig:
     """导航应用配置"""
-    host: str = "192.168.123.100"
-    port: int = 8888
+    host: str = "192.168.123.161"
+    port: int = 8081
 
 
 @dataclass
 class RosbridgeConfig:
     """Rosbridge WebSocket配置"""
-    host: str = "192.168.123.100"
-    port: int = 8888
+    host: str = "192.168.123.161"
+    port: int = 9090
     path: str = "/api/rt"
     use_ssl: bool = False
 

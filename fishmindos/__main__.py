@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 from fishmindos.skills import create_default_registry, SkillRegistry
 from fishmindos.skills.loader import create_skill_manager, SkillManager
-from fishmindos.adapters import create_fishbot_adapter
+from fishmindos.adapters import create_go2_adapter
 from fishmindos.brain.llm_brain import LLMBrain
 from fishmindos.interaction import InteractionManager
 from fishmindos.interaction.callback_receiver import CallbackReceiver
@@ -194,19 +194,13 @@ class FishMindOS:
             # 3. Connect to robot
             print("2. Connecting to robot...")
             
-            # Get Rosbridge settings from config
-            rosbridge_host = config.rosbridge.host
-            rosbridge_port = config.rosbridge.port
-            rosbridge_path = config.rosbridge.path
-            
-            self.adapter = create_fishbot_adapter(
+            self.adapter = create_go2_adapter(
+                robot_ip=config.nav_server.host,
+                robot_port=config.nav_server.port,
                 nav_server_host=nav_server_host,
                 nav_server_port=nav_server_port,
                 nav_app_host=nav_app_host,
                 nav_app_port=nav_app_port,
-                rosbridge_host=rosbridge_host,
-                rosbridge_port=rosbridge_port,
-                rosbridge_path=rosbridge_path
             )
 
             callback_url = self._apply_callback_config(config)
@@ -227,15 +221,15 @@ class FishMindOS:
             # 打印详细的健康检查结果
             print(f"   {self.adapter.vendor_name}")
             print(f"   整体状态: {health['overall_status']}")
+            print(f"   - sdk: {'OK' if health.get('sdk', {}).get('connected') else 'ERR'} {config.nav_server.host}")
+            if health.get('sdk', {}).get('error'):
+                print(f"     错误: {health['sdk']['error']}")
             print(f"   - nav_server: {'OK' if health['nav_server']['connected'] else 'ERR'} {nav_server_host}:{nav_server_port}")
             if health['nav_server']['error']:
                 print(f"     错误: {health['nav_server']['error']}")
             print(f"   - nav_app: {'OK' if health['nav_app']['connected'] else 'ERR'} {nav_app_host}:{nav_app_port}")
             if health['nav_app']['error']:
                 print(f"     错误: {health['nav_app']['error']}")
-            print(f"   - rosbridge: {'OK' if health['rosbridge']['connected'] else 'ERR'} {rosbridge_host}:{rosbridge_port}")
-            if health['rosbridge']['error']:
-                print(f"     错误: {health['rosbridge']['error']}")
 
             if health['success']:
                 # Set adapter for all skills
@@ -356,7 +350,7 @@ class FishMindOS:
 def main():
     """Main function"""
     parser = argparse.ArgumentParser(
-        description="FishMindOS - Smart Robot Dog Control System",
+        description="FishMindOS - Unitree Go2 Smart Robot Dog Control System",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -364,7 +358,7 @@ Examples:
   python -m fishmindos
 
   # Specify API addresses
-  python -m fishmindos --nav-server 192.168.1.100 --nav-app 192.168.1.100
+  python -m fishmindos --nav-server 192.168.123.161 --nav-app 192.168.123.161
 
   # Enable skill hot reload (dev mode)
   python -m fishmindos --hot-reload

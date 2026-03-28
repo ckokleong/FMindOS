@@ -19,17 +19,17 @@ from fishmindos.brain.llm_brain import LLMBrain
 from fishmindos.interaction import InteractionManager
 
 
-class MockFishBotAdapter:
+class MockGo2Adapter:
     """
-    Mock FishBot Adapter - 模拟所有 API 调用
-    与真实 FishBotAdapter 接口完全一致
+    Mock Go2 Adapter - 模拟所有 API 调用
+    与真实 UnitreeGo2Adapter 接口完全一致
     """
     
     def __init__(self, 
-                 nav_server_host: str = "127.0.0.1", nav_server_port: int = 9001,
-                 nav_app_host: str = "127.0.0.1", nav_app_port: int = 9002,
-                 rosbridge_host: str = "127.0.0.1", rosbridge_port: int = 9090,
-                 rosbridge_path: str = "/api/rt"):
+                 robot_ip: str = "192.168.123.161", robot_port: int = 8081,
+                 nav_server_host: str = "192.168.123.161", nav_server_port: int = 8081,
+                 nav_app_host: str = "192.168.123.161", nav_app_port: int = 8081,
+                 **kwargs):
         
         self.nav_server_base = f"http://{nav_server_host}:{nav_server_port}"
         self.nav_app_base = f"http://{nav_app_host}:{nav_app_port}"
@@ -67,13 +67,13 @@ class MockFishBotAdapter:
         self._nav_running = False
         self._current_pose = {"x": 0.0, "y": 0.0, "yaw": 0.0}
         
-        print(f"[MOCK] FishBotAdapter 初始化")
+        print(f"[MOCK] Go2Adapter 初始化")
+        print(f"[MOCK] robot: {robot_ip}:{robot_port}")
         print(f"[MOCK] nav_server: {nav_server_host}:{nav_server_port}")
-        print(f"[MOCK] nav_app: {nav_app_host}:{nav_app_port}")
     
     @property
     def vendor_name(self) -> str:
-        return "FishBot Navigator (MOCK)"
+        return "Unitree Go2 (MOCK)"
     
     def connect(self) -> Dict[str, Any]:
         """健康检查 - 模拟"""
@@ -81,9 +81,9 @@ class MockFishBotAdapter:
         
         results = {
             "success": True,
+            "sdk": {"connected": True, "error": None},
             "nav_server": {"connected": True, "error": None},
             "nav_app": {"connected": True, "error": None},
-            "rosbridge": {"connected": True, "error": None},
             "overall_status": "healthy"
         }
         self._connected = True
@@ -235,17 +235,17 @@ class MockFishBotAdapter:
         }
 
 
-def create_mock_fishbot_adapter(
-    nav_server_host: str = "127.0.0.1", nav_server_port: int = 9001,
-    nav_app_host: str = "127.0.0.1", nav_app_port: int = 9002,
-    rosbridge_host: str = "127.0.0.1", rosbridge_port: int = 9090,
-    rosbridge_path: str = "/api/rt"
-) -> MockFishBotAdapter:
+def create_mock_go2_adapter(
+    robot_ip: str = "192.168.123.161", robot_port: int = 8081,
+    nav_server_host: str = "192.168.123.161", nav_server_port: int = 8081,
+    nav_app_host: str = "192.168.123.161", nav_app_port: int = 8081,
+    **kwargs
+) -> MockGo2Adapter:
     """工厂函数：创建 Mock Adapter"""
-    return MockFishBotAdapter(
-        nav_server_host, nav_server_port,
-        nav_app_host, nav_app_port,
-        rosbridge_host, rosbridge_port, rosbridge_path
+    return MockGo2Adapter(
+        robot_ip=robot_ip, robot_port=robot_port,
+        nav_server_host=nav_server_host, nav_server_port=nav_server_port,
+        nav_app_host=nav_app_host, nav_app_port=nav_app_port,
     )
 
 
@@ -289,14 +289,13 @@ class MockFishMindOS:
             
             # 3. 连接 Mock 机器人
             print("2. Connecting to robot (MOCK)...")
-            self.adapter = create_mock_fishbot_adapter(
+            self.adapter = create_mock_go2_adapter(
+                robot_ip=config.nav_server.host,
+                robot_port=config.nav_server.port,
                 nav_server_host=config.nav_server.host,
                 nav_server_port=config.nav_server.port,
                 nav_app_host=config.nav_app.host,
                 nav_app_port=config.nav_app.port,
-                rosbridge_host=config.rosbridge.host,
-                rosbridge_port=config.rosbridge.port,
-                rosbridge_path=config.rosbridge.path
             )
             
             health = self.adapter.connect()

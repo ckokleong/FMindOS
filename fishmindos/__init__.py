@@ -16,8 +16,8 @@ from fishmindos.skills import (
     create_skill_manager,
 )
 from fishmindos.adapters import (
-    create_fishbot_adapter,
-    FishBotAdapter,
+    create_go2_adapter,
+    UnitreeGo2Adapter,
 )
 
 __all__ = [
@@ -28,8 +28,8 @@ __all__ = [
     "SkillManager",
     "create_skill_manager",
     # 适配器
-    "create_fishbot_adapter",
-    "FishBotAdapter",
+    "create_go2_adapter",
+    "UnitreeGo2Adapter",
 ]
 
 __version__ = "2.0.0"
