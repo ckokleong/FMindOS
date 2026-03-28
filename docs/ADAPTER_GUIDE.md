@@ -2,14 +2,15 @@
 新机器人适配器接入指南
 ===================
 
-本文档说明如何将 YourRobot 或其他机器人接入 FishMindOS
+本文档说明如何将新的机器人接入 FishMindOS。
+当前默认适配器为 Unitree Go2 (宇树Go2四足机器人)。
 """
 
 ## 快速开始
 
 ### 1. 创建适配器文件
 
-参考 `fishmindos/adapters/your_robot.py`，实现以下步骤：
+参考 `fishmindos/adapters/unitree_go2.py`（当前默认）或 `fishmindos/adapters/your_robot.py`（通用模板），实现以下步骤：
 
 ```python
 # fishmindos/adapters/your_robot.py

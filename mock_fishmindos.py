@@ -9,21 +9,21 @@ from pathlib import Path
 # 确保可以导入 fishmindos
 sys.path.insert(0, str(Path(__file__).parent))
 
-# 替换 adapters 模块中的 FishBotAdapter
+# 替换 adapters 模块中的 Go2 Adapter
 import fishmindos.adapters as adapters_module
 from fishmindos.adapters.base import RobotAdapter, MapInfo, WaypointInfo, TaskInfo, RobotStatus
 
-class MockFishBotAdapter(RobotAdapter):
+class MockGo2Adapter(RobotAdapter):
     """
     Mock Adapter - 模拟所有 API 调用，不连接真机器人
-    与真实 FishBotAdapter 接口完全一致
+    与真实 UnitreeGo2Adapter 接口完全一致
     """
     
     def __init__(self, 
-                 nav_server_host: str = "127.0.0.1", nav_server_port: int = 9001,
-                 nav_app_host: str = "127.0.0.1", nav_app_port: int = 9002,
-                 rosbridge_host: str = "127.0.0.1", rosbridge_port: int = 9090,
-                 rosbridge_path: str = "/api/rt"):
+                 robot_ip: str = "192.168.123.161", robot_port: int = 8081,
+                 nav_server_host: str = "192.168.123.161", nav_server_port: int = 8081,
+                 nav_app_host: str = "192.168.123.161", nav_app_port: int = 8081,
+                 **kwargs):
         
         self.nav_server_base = f"http://{nav_server_host}:{nav_server_port}"
         self.nav_app_base = f"http://{nav_app_host}:{nav_app_port}"
@@ -67,11 +67,11 @@ class MockFishBotAdapter(RobotAdapter):
         self._current_pose = {"x": 0.0, "y": 0.0, "yaw": 0.0}
         self._battery = 85.0
         
-        print(f"[MOCK] Adapter 初始化: {nav_server_host}:{nav_server_port}")
+        print(f"[MOCK] Adapter 初始化: {robot_ip}:{robot_port}")
     
     @property
     def vendor_name(self) -> str:
-        return "FishBot Navigator (MOCK)"
+        return "Unitree Go2 (MOCK)"
     
     def connect(self) -> dict:
         """健康检查"""
@@ -79,9 +79,9 @@ class MockFishBotAdapter(RobotAdapter):
         self._connected = True
         return {
             "success": True,
+            "sdk": {"connected": True, "error": None},
             "nav_server": {"connected": True, "error": None},
             "nav_app": {"connected": True, "error": None},
-            "rosbridge": {"connected": True, "error": None},
             "overall_status": "healthy"
         }
     
@@ -259,16 +259,16 @@ class MockFishBotAdapter(RobotAdapter):
         }
 
 
-# 替换真实的 create_fishbot_adapter
-original_create_fishbot_adapter = adapters_module.create_fishbot_adapter
+# 替换真实的 create_go2_adapter
+original_create_go2_adapter = adapters_module.create_go2_adapter
 
-def mock_create_fishbot_adapter(**kwargs):
+def mock_create_go2_adapter(**kwargs):
     """工厂函数：创建 Mock Adapter"""
-    return MockFishBotAdapter(**kwargs)
+    return MockGo2Adapter(**kwargs)
 
 # Monkey patch
-adapters_module.create_fishbot_adapter = mock_create_fishbot_adapter
-adapters_module.FishBotAdapter = MockFishBotAdapter
+adapters_module.create_go2_adapter = mock_create_go2_adapter
+adapters_module.UnitreeGo2Adapter = MockGo2Adapter
 
 
 # 现在导入真实的 FishMindOS
@@ -278,7 +278,7 @@ from fishmindos.__main__ import FishMindOS
 def main():
     """主入口"""
     print("=" * 70)
-    print(" FishMindOS Mock - 真实 LLM + Mock Adapter")
+    print(" FishMindOS Mock - 真实 LLM + Mock Adapter (Unitree Go2)")
     print(" 测试 LLM 决策能力，不控制真机器人")
     print("=" * 70)
     print()

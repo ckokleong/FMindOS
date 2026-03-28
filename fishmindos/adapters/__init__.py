@@ -11,7 +11,7 @@ from fishmindos.adapters.base import (
     RobotStatus,
     AdapterError,
 )
-from fishmindos.adapters.fishbot import FishBotAdapter, create_fishbot_adapter
+from fishmindos.adapters.unitree_go2 import UnitreeGo2Adapter, create_go2_adapter
 
 __all__ = [
     "RobotAdapter",
@@ -20,6 +20,6 @@ __all__ = [
     "TaskInfo",
     "RobotStatus",
     "AdapterError",
-    "FishBotAdapter",
-    "create_fishbot_adapter",
+    "UnitreeGo2Adapter",
+    "create_go2_adapter",
 ]
