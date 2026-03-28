@@ -314,14 +314,14 @@ class UnitreeGo2Adapter(RobotAdapter):
     def _is_arrival_event(self, event_name: str, payload: Dict[str, Any]) -> bool:
         if payload.get("arrived") is True:
             return True
-        return self._matches_event(event_name, ["arriv", "reached", "reach", "waypoint_arrived", "\u5230\u8fbe"])
+        return self._matches_event(event_name, ["arriv", "reached", "reach", "waypoint_arrived", "到达"])
 
     def _is_dock_complete_event(self, event_name: str, payload: Dict[str, Any]) -> bool:
         if payload.get("dock_complete") is True or (payload.get("charging") is True and self._matches_event(event_name, ["dock", "charg"])):
             return True
         return self._matches_event(event_name, [
             "dock_complete", "docking_complete", "charge_complete",
-            "charging_complete", "docked", "\u5145\u7535\u5b8c\u6210", "\u56de\u5145\u5b8c\u6210"
+            "charging_complete", "docked", "充电完成", "回充完成"
         ])
 
     def _is_nav_started_event(self, event_name: str, payload: Dict[str, Any]) -> bool:
@@ -329,7 +329,7 @@ class UnitreeGo2Adapter(RobotAdapter):
             return True
         return self._matches_event(event_name, [
             "nav_start", "nav_started", "navigation_started",
-            "start_navigation", "\u5f00\u59cb\u5bfc\u822a"
+            "start_navigation", "开始导航"
         ])
 
     def _is_nav_stop_event(self, event_name: str) -> bool:
@@ -874,7 +874,7 @@ class UnitreeGo2Adapter(RobotAdapter):
                 dock_waypoint = None
                 for wp in waypoints:
                     name = (wp.name or "").lower()
-                    if "\u56de\u5145" in wp.name or "\u5145\u7535" in wp.name or "dock" in name:
+                    if "回充" in wp.name or "充电" in wp.name or "dock" in name:
                         dock_waypoint = wp
                         break
                 if dock_waypoint:
@@ -907,7 +907,7 @@ class UnitreeGo2Adapter(RobotAdapter):
             if success:
                 self._update_callback_state(
                     nav_running=True, target_waypoint_id=None,
-                    target_waypoint_name="\u56de\u5145\u70b9", target_pose=None,
+                    target_waypoint_name="回充点", target_pose=None,
                     target_updated_at=time.time(), dock_complete_at=None,
                     arrived_waypoint_id=None, arrived_at=None,
                 )
