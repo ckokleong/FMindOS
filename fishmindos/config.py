@@ -91,6 +91,16 @@ class AppConfig:
 
 
 @dataclass
+class UnitreeB2Config:
+    """Unitree B2 机器人配置"""
+    robot_ip: str = "192.168.123.161"
+    network_interface: str = "eth0"
+    enable_lease: bool = True
+    waypoints_file: str = "waypoints.json"
+    maps_file: str = "maps.json"
+
+
+@dataclass
 class FishMindConfig:
     """FishMindOS 完整配置"""
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -101,6 +111,7 @@ class FishMindConfig:
     callback: CallbackConfig = field(default_factory=CallbackConfig)
     skills: SkillConfig = field(default_factory=SkillConfig)
     app: AppConfig = field(default_factory=AppConfig)
+    unitree_b2: UnitreeB2Config = field(default_factory=UnitreeB2Config)
     
     @classmethod
     def from_file(cls, config_path: str) -> "FishMindConfig":
@@ -249,7 +260,8 @@ class FishMindConfig:
             "websocket": asdict(self.websocket),
             "callback": asdict(self.callback),
             "skills": asdict(self.skills),
-            "app": asdict(self.app)
+            "app": asdict(self.app),
+            "unitree_b2": asdict(self.unitree_b2),
         }
     
     @classmethod
@@ -274,6 +286,8 @@ class FishMindConfig:
             config.skills = SkillConfig(**data["skills"])
         if "app" in data:
             config.app = AppConfig(**data["app"])
+        if "unitree_b2" in data:
+            config.unitree_b2 = UnitreeB2Config(**data["unitree_b2"])
         return config
 
 

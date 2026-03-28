@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from fishmindos.skills import create_default_registry, SkillRegistry
 from fishmindos.skills.loader import create_skill_manager, SkillManager
 from fishmindos.adapters import create_fishbot_adapter
+from fishmindos.adapters.unitree_b2 import create_unitree_b2_adapter
 from fishmindos.brain.llm_brain import LLMBrain
 from fishmindos.interaction import InteractionManager
 from fishmindos.interaction.callback_receiver import CallbackReceiver
@@ -151,7 +152,9 @@ class FishMindOS:
         nav_app_host: str = "127.0.0.1",
         nav_app_port: int = 9002,
         skill_paths: Optional[list] = None,
-        enable_hot_reload: bool = False
+        enable_hot_reload: bool = False,
+        robot_type: str = "fishbot",
+        robot_ip: str = "192.168.123.161",
     ) -> bool:
         """
         Initialize the system
@@ -163,6 +166,8 @@ class FishMindOS:
             nav_app_port: nav_app port
             skill_paths: Additional skill search paths
             enable_hot_reload: Enable skill hot reload
+            robot_type: Robot type ("fishbot" or "unitree_b2")
+            robot_ip: Robot IP address (used for unitree_b2)
             
         Returns:
             Whether initialization succeeded
@@ -193,21 +198,32 @@ class FishMindOS:
             
             # 3. Connect to robot
             print("2. Connecting to robot...")
-            
-            # Get Rosbridge settings from config
+
+            # Get Rosbridge settings from config (used for FishBot)
             rosbridge_host = config.rosbridge.host
             rosbridge_port = config.rosbridge.port
             rosbridge_path = config.rosbridge.path
-            
-            self.adapter = create_fishbot_adapter(
-                nav_server_host=nav_server_host,
-                nav_server_port=nav_server_port,
-                nav_app_host=nav_app_host,
-                nav_app_port=nav_app_port,
-                rosbridge_host=rosbridge_host,
-                rosbridge_port=rosbridge_port,
-                rosbridge_path=rosbridge_path
-            )
+
+            if robot_type == "unitree_b2":
+                # Unitree B2 适配器：从 CLI 参数和配置文件中读取选项
+                b2_cfg = config.unitree_b2
+                self.adapter = create_unitree_b2_adapter(
+                    robot_ip=robot_ip,
+                    network_interface=b2_cfg.network_interface,
+                    waypoints_file=b2_cfg.waypoints_file,
+                    maps_file=b2_cfg.maps_file,
+                )
+            else:
+                # FishBot 适配器（默认）
+                self.adapter = create_fishbot_adapter(
+                    nav_server_host=nav_server_host,
+                    nav_server_port=nav_server_port,
+                    nav_app_host=nav_app_host,
+                    nav_app_port=nav_app_port,
+                    rosbridge_host=rosbridge_host,
+                    rosbridge_port=rosbridge_port,
+                    rosbridge_path=rosbridge_path
+                )
 
             callback_url = self._apply_callback_config(config)
             callback_receiver_url = None
@@ -227,15 +243,20 @@ class FishMindOS:
             # 打印详细的健康检查结果
             print(f"   {self.adapter.vendor_name}")
             print(f"   整体状态: {health['overall_status']}")
-            print(f"   - nav_server: {'OK' if health['nav_server']['connected'] else 'ERR'} {nav_server_host}:{nav_server_port}")
-            if health['nav_server']['error']:
-                print(f"     错误: {health['nav_server']['error']}")
-            print(f"   - nav_app: {'OK' if health['nav_app']['connected'] else 'ERR'} {nav_app_host}:{nav_app_port}")
-            if health['nav_app']['error']:
-                print(f"     错误: {health['nav_app']['error']}")
-            print(f"   - rosbridge: {'OK' if health['rosbridge']['connected'] else 'ERR'} {rosbridge_host}:{rosbridge_port}")
-            if health['rosbridge']['error']:
-                print(f"     错误: {health['rosbridge']['error']}")
+            if robot_type == "unitree_b2":
+                print(f"   - DDS/SDK: {'OK' if health['nav_server']['connected'] else 'ERR'} {robot_ip}")
+                if health['nav_server']['error']:
+                    print(f"     错误: {health['nav_server']['error']}")
+            else:
+                print(f"   - nav_server: {'OK' if health['nav_server']['connected'] else 'ERR'} {nav_server_host}:{nav_server_port}")
+                if health['nav_server']['error']:
+                    print(f"     错误: {health['nav_server']['error']}")
+                print(f"   - nav_app: {'OK' if health['nav_app']['connected'] else 'ERR'} {nav_app_host}:{nav_app_port}")
+                if health['nav_app']['error']:
+                    print(f"     错误: {health['nav_app']['error']}")
+                print(f"   - rosbridge: {'OK' if health['rosbridge']['connected'] else 'ERR'} {rosbridge_host}:{rosbridge_port}")
+                if health['rosbridge']['error']:
+                    print(f"     错误: {health['rosbridge']['error']}")
 
             if health['success']:
                 # Set adapter for all skills
@@ -410,6 +431,17 @@ Examples:
         help="Enable skill hot reload (development mode)"
     )
     parser.add_argument(
+        "--robot",
+        choices=["fishbot", "unitree_b2"],
+        default="fishbot",
+        help="Robot type to connect to (default: fishbot)"
+    )
+    parser.add_argument(
+        "--robot-ip",
+        default="192.168.123.161",
+        help="Robot IP address for Unitree B2 (default: 192.168.123.161)"
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version="%(prog)s 2.0.0"
@@ -426,7 +458,9 @@ Examples:
         nav_app_host=args.nav_app,
         nav_app_port=args.nav_app_port,
         skill_paths=args.skill_path,
-        enable_hot_reload=args.hot_reload
+        enable_hot_reload=args.hot_reload,
+        robot_type=args.robot,
+        robot_ip=args.robot_ip,
     ):
         # Run main loop
         app.run()
