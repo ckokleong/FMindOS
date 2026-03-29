@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 from fishmindos.skills import create_default_registry, SkillRegistry
 from fishmindos.skills.loader import create_skill_manager, SkillManager
-from fishmindos.adapters import create_go2_adapter
+from fishmindos.adapters import create_walker_s2_adapter
 from fishmindos.brain.llm_brain import LLMBrain
 from fishmindos.interaction import InteractionManager
 from fishmindos.interaction.callback_receiver import CallbackReceiver
@@ -194,7 +194,7 @@ class FishMindOS:
             # 3. Connect to robot
             print("2. Connecting to robot...")
             
-            self.adapter = create_go2_adapter(
+            self.adapter = create_walker_s2_adapter(
                 robot_ip=config.nav_server.host,
                 robot_port=config.nav_server.port,
                 nav_server_host=nav_server_host,
@@ -221,9 +221,11 @@ class FishMindOS:
             # 打印详细的健康检查结果
             print(f"   {self.adapter.vendor_name}")
             print(f"   整体状态: {health['overall_status']}")
-            print(f"   - sdk: {'OK' if health.get('sdk', {}).get('connected') else 'ERR'} {config.nav_server.host}")
-            if health.get('sdk', {}).get('error'):
-                print(f"     错误: {health['sdk']['error']}")
+            sdk_info = health.get('sdk', {})
+            if sdk_info.get('connected'):
+                print(f"   - sdk: OK {config.nav_server.host}")
+            elif sdk_info.get('error'):
+                print(f"   - sdk: N/A ({sdk_info['error']})")
             print(f"   - nav_server: {'OK' if health['nav_server']['connected'] else 'ERR'} {nav_server_host}:{nav_server_port}")
             if health['nav_server']['error']:
                 print(f"     错误: {health['nav_server']['error']}")
@@ -350,7 +352,7 @@ class FishMindOS:
 def main():
     """Main function"""
     parser = argparse.ArgumentParser(
-        description="FishMindOS - Unitree Go2 Smart Robot Dog Control System",
+        description="FishMindOS - UBTech Walker S2 Smart Humanoid Robot Control System",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

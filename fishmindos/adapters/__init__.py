@@ -12,6 +12,7 @@ from fishmindos.adapters.base import (
     AdapterError,
 )
 from fishmindos.adapters.unitree_go2 import UnitreeGo2Adapter, create_go2_adapter
+from fishmindos.adapters.ubtech_walker_s2 import UBTechWalkerS2Adapter, create_walker_s2_adapter
 
 __all__ = [
     "RobotAdapter",
@@ -22,4 +23,6 @@ __all__ = [
     "AdapterError",
     "UnitreeGo2Adapter",
     "create_go2_adapter",
+    "UBTechWalkerS2Adapter",
+    "create_walker_s2_adapter",
 ]

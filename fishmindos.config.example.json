@@ -1,6 +1,6 @@
 {
   "adapter": {
-    "type": "unitree_go2",
+    "type": "ubtech_walker_s2",
     "battery": 85.0,
     "position": {"x": 1.0, "y": 2.0},
     "nav_delay": 2.0
@@ -18,49 +18,52 @@
   },
   "nav": {
     "scheme": "http",
-    "host": "192.168.123.161",
-    "port": 8081,
+    "host": "192.168.12.1",
+    "port": 9090,
     "base_url": "",
     "timeout_sec": 15,
     "auth_token": "",
     "username": "",
     "password": ""
   },
+  "nav_server": {
+    "host": "192.168.12.1",
+    "port": 9090
+  },
+  "nav_app": {
+    "host": "192.168.12.1",
+    "port": 9090
+  },
   "rosbridge": {
     "ws_url": "",
     "scheme": "ws",
-    "host": "192.168.123.161",
+    "host": "192.168.12.1",
     "port": 9090,
     "path": "/api/rt",
-    "timeout_sec": 5,
-    "motion_presets": {
-      "stand": {
-        "linear_z": 1.0
-      },
-      "lie_down": {
-        "linear_z": -1.0
-      }
-    }
+    "timeout_sec": 5
   },
   "planner": {
     "motion_aliases": {
-      "站立": "stand",
-      "起立": "stand",
-      "站起来": "stand",
-      "趴下": "lie_down",
-      "卧倒": "lie_down"
+      "招手": "wave",
+      "挥手": "wave",
+      "鞠躬": "bow",
+      "点头": "nod",
+      "跳舞": "dance",
+      "打招呼": "greeting",
+      "待机": "standby",
+      "站立": "standby"
     }
   },
   "task_chains": {
     "storage_file": "task_chains.json"
   },
   "world_model": {
-    "default_map_name": "26层"
+    "default_map_name": "大厅"
   },
   "callback": {
     "enabled": false,
     "host": "0.0.0.0",
-    "port": 8081,
+    "port": 9090,
     "path": "/callback/nav_event",
     "url": null,
     "max_events": 100
