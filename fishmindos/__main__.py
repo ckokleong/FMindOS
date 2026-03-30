@@ -18,6 +18,7 @@ from fishmindos.skills.loader import create_skill_manager, SkillManager
 from fishmindos.adapters import create_fishbot_adapter
 from fishmindos.brain.llm_brain import LLMBrain
 from fishmindos.interaction import InteractionManager, TerminalChannel
+from fishmindos.interaction.android_gateway import AndroidGateway
 from fishmindos.interaction.callback_receiver import CallbackReceiver
 from fishmindos.config import get_config
 from fishmindos.world import WorldResolver
@@ -58,6 +59,7 @@ class FishMindOS:
         self.brain: Optional[LLMBrain] = None
         self.interaction: Optional[InteractionManager] = None
         self.interaction_channel: Optional[TerminalChannel] = None
+        self.android_gateway: Optional[AndroidGateway] = None
         self.callback_receiver: Optional[CallbackReceiver] = None
         self.world_resolver: Optional[WorldResolver] = None
         self.soul: Optional[Soul] = None
@@ -402,6 +404,19 @@ class FishMindOS:
             self.interaction = InteractionManager(self.brain)
             self.interaction_channel = TerminalChannel(self.interaction)
             print("   Terminal UI ready")
+
+            # Android gateway (optional — set android.enabled=true in config)
+            if getattr(config, "android", None) and config.android.enabled:
+                try:
+                    self.android_gateway = AndroidGateway(
+                        self.interaction,
+                        host=config.android.host,
+                        port=config.android.port,
+                    )
+                    self.android_gateway.start()
+                    print(f"   Android Gateway: OK  ws://{config.android.host}:{config.android.port}/api/events")
+                except Exception as _gw_err:
+                    print(f"   Android Gateway: WARN {_gw_err}")
             
             print()
             print("=" * 60)
@@ -453,6 +468,10 @@ class FishMindOS:
         
         if self.skill_manager:
             self.skill_manager.shutdown()
+
+        if self.android_gateway:
+            self.android_gateway.stop()
+            self.android_gateway = None
 
         if self.interaction_channel:
             self.interaction_channel.stop()

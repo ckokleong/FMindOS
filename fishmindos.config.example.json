@@ -68,5 +68,10 @@
     "identity": "你的机器人名字",
     "prompt_profile": null,
     "language": "zh"
+  },
+  "android": {
+    "enabled": true,
+    "host": "0.0.0.0",
+    "port": 8083
   }
 }

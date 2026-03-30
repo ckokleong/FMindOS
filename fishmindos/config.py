@@ -120,6 +120,14 @@ class AppConfig:
 
 
 @dataclass
+class AndroidConfig:
+    """Android 网关配置"""
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 8083
+
+
+@dataclass
 class FishMindConfig:
     """FishMindOS 完整配置"""
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -133,6 +141,7 @@ class FishMindConfig:
     mission: MissionConfig = field(default_factory=MissionConfig)
     skills: SkillConfig = field(default_factory=SkillConfig)
     app: AppConfig = field(default_factory=AppConfig)
+    android: AndroidConfig = field(default_factory=AndroidConfig)
     
     @classmethod
     def from_file(cls, config_path: str) -> "FishMindConfig":
@@ -342,7 +351,8 @@ class FishMindConfig:
             "soul": asdict(self.soul),
             "mission": asdict(self.mission),
             "skills": asdict(self.skills),
-            "app": asdict(self.app)
+            "app": asdict(self.app),
+            "android": asdict(self.android),
         }
     
     @classmethod
@@ -373,6 +383,8 @@ class FishMindConfig:
             config.skills = SkillConfig(**data["skills"])
         if "app" in data:
             config.app = AppConfig(**data["app"])
+        if "android" in data:
+            config.android = AndroidConfig(**data["android"])
         return config
 
 

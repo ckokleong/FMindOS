@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from fishmindos.config import resolve_config_path
 from fishmindos.core.event_bus import global_event_bus
+from fishmindos.interaction.session_manager import InteractionSession, SessionManager
 from fishmindos.world import WorldResolver
 
 
@@ -46,20 +47,32 @@ class InteractionManager:
 
     def __init__(self, brain=None, config_path: str | Path | None = None):
         self.brain = brain
-        self.conversation_history: List[Dict[str, Any]] = []
         self.session_context: Dict[str, Any] = {}
         self.config_path = resolve_config_path(config_path)
-        self._async_mission_active = False
+        base_context = dict(getattr(brain, "session_context", {}) or {})
+        self.sessions = SessionManager(session_template=base_context)
+        self._active_session_id: Optional[str] = None
+        self._async_session_id: Optional[str] = None
         self._listeners: List[InteractionListener] = []
         global_event_bus.subscribe("mission_completed", self._on_async_mission_done)
         global_event_bus.subscribe("mission_failed", self._on_async_mission_done)
 
-    @property
-    def is_async_mission_active(self) -> bool:
-        return self._async_mission_active
+        if brain is not None:
+            default_session = self.sessions.get_or_create(
+                "terminal-default",
+                client_type="terminal",
+                initial_context=base_context,
+            )
+            default_session.session_context = getattr(brain, "session_context", default_session.session_context)
+            self._activate_session("terminal-default")
 
     def set_brain(self, brain) -> None:
         self.brain = brain
+        if self._active_session_id:
+            session = self.sessions.get_or_create(self._active_session_id)
+            if getattr(brain, "session_context", None) is not session.session_context:
+                brain.session_context = session.session_context
+                self.session_context = session.session_context
 
     def add_listener(self, listener: InteractionListener) -> None:
         if listener not in self._listeners:
@@ -69,9 +82,10 @@ class InteractionManager:
         if listener in self._listeners:
             self._listeners.remove(listener)
 
-    def emit(self, event_type: str, **payload: Any) -> Dict[str, Any]:
+    def emit(self, event_type: str, session_id: Optional[str] = None, **payload: Any) -> Dict[str, Any]:
         event = {
             "type": event_type,
+            "session_id": session_id,
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "payload": payload,
         }
@@ -87,25 +101,55 @@ class InteractionManager:
             return self.brain.adapter
         return None
 
-    def _on_async_mission_done(self, data=None) -> None:
-        self._async_mission_active = False
-        self.emit("async_mission_done", data=data)
-        self.emit("prompt_ready")
+    def get_session(self, session_id: str, client_type: str = "unknown") -> InteractionSession:
+        return self.sessions.get_or_create(session_id, client_type=client_type)
 
-    def _sync_world_to_brain(self, resolver: WorldResolver) -> None:
+    def get_session_context(self, session_id: str) -> Dict[str, Any]:
+        return self.get_session(session_id).session_context
+
+    def is_async_mission_active(self, session_id: Optional[str] = None) -> bool:
+        if session_id:
+            session = self.sessions.get(session_id)
+            return bool(session.async_mission_active) if session else False
+        if self._async_session_id:
+            session = self.sessions.get(self._async_session_id)
+            return bool(session.async_mission_active) if session else False
+        return False
+
+    def _activate_session(self, session_id: str, client_type: str = "unknown") -> InteractionSession:
+        session = self.sessions.get_or_create(session_id, client_type=client_type)
+        session.touch()
+        self._active_session_id = session_id
+        self.session_context = session.session_context
+        if self.brain is not None and getattr(self.brain, "session_context", None) is not session.session_context:
+            self.brain.session_context = session.session_context
+        return session
+
+    def _on_async_mission_done(self, data=None) -> None:
+        session_id = self._async_session_id or self._active_session_id or "terminal-default"
+        session = self.sessions.get_or_create(session_id, client_type="terminal")
+        session.async_mission_active = False
+        session.current_mission_id = None
+        session.waiting_for_human = False
+        self._async_session_id = None
+        self.emit("async_mission_done", session_id=session_id, data=data)
+        self.emit("prompt_ready", session_id=session_id)
+
+    def _sync_world_to_session(self, resolver: WorldResolver, session_id: Optional[str] = None) -> None:
         if not self.brain:
             return
 
-        session = self.brain.session_context
-        session["world"] = resolver
-        session["world_model"] = resolver
-        session["world_enabled"] = True
-        session["world_summary"] = resolver.describe()
-        session["world_prompt"] = resolver.describe_for_prompt(limit=50)
-        session["world_name"] = getattr(resolver.world, "name", "default")
-        session["world_default_map"] = resolver.world.default_map_name or resolver.world.default_map_id
-        session["world_known_locations"] = resolver.list_known_locations()
-        session["world_adapter_fallback"] = resolver.adapter_fallback
+        target_session = self._activate_session(session_id or self._active_session_id or "terminal-default")
+        session_context = target_session.session_context
+        session_context["world"] = resolver
+        session_context["world_model"] = resolver
+        session_context["world_enabled"] = True
+        session_context["world_summary"] = resolver.describe()
+        session_context["world_prompt"] = resolver.describe_for_prompt(limit=50)
+        session_context["world_name"] = getattr(resolver.world, "name", "default")
+        session_context["world_default_map"] = resolver.world.default_map_name or resolver.world.default_map_id
+        session_context["world_known_locations"] = resolver.list_known_locations()
+        session_context["world_adapter_fallback"] = resolver.adapter_fallback
 
     def build_world_profile_path(self, map_name: str) -> Path:
         safe_name = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", map_name).strip("_")
@@ -119,8 +163,9 @@ class InteractionManager:
             resolved = Path.cwd() / resolved
         return resolved
 
-    def reload_world(self, world_path: Path, config) -> WorldResolver:
-        soul = self.brain.session_context.get("soul") if self.brain else None
+    def reload_world(self, world_path: Path, config, session_id: Optional[str] = None) -> WorldResolver:
+        target_session = self._activate_session(session_id or self._active_session_id or "terminal-default")
+        soul = target_session.session_context.get("soul") if self.brain else None
         resolver = WorldResolver.from_path(
             world_path,
             adapter=self.get_adapter(),
@@ -129,27 +174,32 @@ class InteractionManager:
             prefer_current_map=config.world.prefer_current_map,
             adapter_fallback=config.world.adapter_fallback,
         )
-        self._sync_world_to_brain(resolver)
+        self._sync_world_to_session(resolver, target_session.session_id)
         return resolver
 
-    def cancel_current(self) -> None:
+    def cancel_current(self, session_id: str = "terminal-default") -> None:
+        self._activate_session(session_id, client_type="terminal")
         if self.brain:
             self.brain.cancel()
-            self.emit("info", message="已停止")
+            self.emit("info", session_id=session_id, message="已停止")
 
-    def confirm_human(self, raw_input: str = "确认") -> None:
+    def confirm_human(self, raw_input: str = "确认", session_id: str = "terminal-default") -> None:
+        session = self._activate_session(session_id, client_type="terminal")
+        session.waiting_for_human = False
         global_event_bus.publish(
             "human_confirmed",
             {
                 "source": "interaction",
                 "input": raw_input,
+                "session_id": session_id,
                 "time": datetime.now().isoformat(timespec="seconds"),
             },
         )
-        self.emit("info", message="已发送人工确认事件（human_confirmed）")
+        self.emit("info", session_id=session_id, message="已发送人工确认事件（human_confirmed）")
 
-    def handle_user_text(self, text: str) -> None:
-        self.emit("thinking_started", message="思考中")
+    def handle_user_text(self, text: str, session_id: str = "terminal-default", client_type: str = "terminal") -> None:
+        session = self._activate_session(session_id, client_type=client_type)
+        self.emit("thinking_started", session_id=session_id, message="思考中")
 
         all_responses: List[Dict[str, Any]] = []
         current_step = 0
@@ -161,13 +211,13 @@ class InteractionManager:
 
         try:
             if not self.brain:
-                self.emit("thinking_stopped")
-                self.emit("error", message="大脑未初始化")
+                self.emit("thinking_stopped", session_id=session_id)
+                self.emit("error", session_id=session_id, message="大脑未初始化")
                 return
 
             if not hasattr(self.brain, "think"):
-                self.emit("thinking_stopped")
-                self.emit("error", message="大脑没有 think 方法")
+                self.emit("thinking_stopped", session_id=session_id)
+                self.emit("error", session_id=session_id, message="大脑没有 think 方法")
                 return
 
             for resp in self.brain.think(text):
@@ -184,19 +234,19 @@ class InteractionManager:
                 response_type = resp_dict.get("type", "text")
 
                 if not thinking_stopped:
-                    self.emit("thinking_stopped")
+                    self.emit("thinking_stopped", session_id=session_id)
                     thinking_stopped = True
 
                 if response_type == "plan":
                     steps = resp_dict.get("metadata", {}).get("steps", [])
-                    self.emit("plan", steps=steps)
-                    self.emit("info", message="执行中...")
+                    self.emit("plan", session_id=session_id, steps=steps)
+                    self.emit("info", session_id=session_id, message="执行中...")
 
                 elif response_type == "action":
                     current_step += 1
                     had_action = True
                     skill_name = resp_dict.get("metadata", {}).get("skill", "")
-                    self.emit("action", skill_name=skill_name, step_num=current_step)
+                    self.emit("action", session_id=session_id, skill_name=skill_name, step_num=current_step)
 
                 elif response_type == "result":
                     metadata = resp_dict.get("metadata", {}) or {}
@@ -206,6 +256,7 @@ class InteractionManager:
                     result_data = metadata.get("data")
                     self.emit(
                         "result",
+                        session_id=session_id,
                         skill_name=skill_name,
                         success=success,
                         message=message,
@@ -231,11 +282,13 @@ class InteractionManager:
                                 if planned_tasks is not None:
                                     break
                             if planned_tasks != result_tasks:
-                                self.emit("actual_mission_tasks", tasks=result_tasks)
+                                self.emit("actual_mission_tasks", session_id=session_id, tasks=result_tasks)
 
                         mission_pending_response = bool(result_data.get("pending", True))
                         if mission_pending_response:
-                            self._async_mission_active = True
+                            session.async_mission_active = True
+                            session.current_mission_id = datetime.now().isoformat(timespec="seconds")
+                            self._async_session_id = session_id
                             final_response = "任务已提交，正在执行中，请等待导航/回调事件。"
 
                 elif response_type == "text":
@@ -250,38 +303,39 @@ class InteractionManager:
                         final_response = cleaned_text
 
                 elif response_type == "error":
-                    self.emit("error", message=resp_dict.get("content", ""))
+                    self.emit("error", session_id=session_id, message=resp_dict.get("content", ""))
                     had_error = True
 
             if not thinking_stopped:
-                self.emit("thinking_stopped")
+                self.emit("thinking_stopped", session_id=session_id)
                 thinking_stopped = True
 
             if not all_responses:
-                self.emit("error", message="未收到大脑输出。请重试，或简化指令后再试。")
+                self.emit("error", session_id=session_id, message="未收到大脑输出。请重试，或简化指令后再试。")
                 return
 
             if final_response and not had_error:
-                self.emit("message", text=final_response)
+                self.emit("message", session_id=session_id, text=final_response)
             elif had_action and not had_error:
-                self.emit("message", text="本轮操作已执行完成。")
+                self.emit("message", session_id=session_id, text="本轮操作已执行完成。")
             elif not had_error:
-                self.emit("message", text="我刚才没有生成有效回复，请再试一次。")
+                self.emit("message", session_id=session_id, text="我刚才没有生成有效回复，请再试一次。")
 
-            self.conversation_history.append(
+            session.conversation_history.append(
                 {
                     "input": text,
                     "responses": all_responses,
                     "time": datetime.now().isoformat(),
                 }
             )
+            session.touch()
 
         except Exception as e:
             if not thinking_stopped:
-                self.emit("thinking_stopped")
-            self.emit("error", message=f"错误: {str(e)}")
+                self.emit("thinking_stopped", session_id=session_id)
+            self.emit("error", session_id=session_id, message=f"错误: {str(e)}")
         finally:
-            self.emit("interaction_complete", async_mission_active=self._async_mission_active)
+            self.emit("interaction_complete", session_id=session_id, async_mission_active=session.async_mission_active)
 
 
 def create_interaction_manager(brain=None) -> InteractionManager:

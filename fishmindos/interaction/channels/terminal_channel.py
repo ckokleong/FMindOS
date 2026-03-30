@@ -243,11 +243,15 @@ class TerminalUI:
 class TerminalChannel(InteractionChannel):
     """Terminal-backed interaction channel."""
 
+    DEFAULT_SESSION_ID = "terminal-default"
+
     def __init__(self, manager: "InteractionManager", use_colors: bool = True):
         self.manager = manager
         self.ui = TerminalUI(use_colors=use_colors)
         self.spinner: Optional[Spinner] = None
         self._running = False
+        self.session_id = self.DEFAULT_SESSION_ID
+        self.manager.get_session(self.session_id, client_type="terminal")
         self.manager.add_listener(self.handle_event)
 
     def start(self) -> None:
@@ -257,7 +261,7 @@ class TerminalChannel(InteractionChannel):
 
         while self._running:
             try:
-                if not self.manager.is_async_mission_active:
+                if not self.manager.is_async_mission_active(self.session_id):
                     self.ui.print_user_prompt()
                 user_input = input().strip()
                 if not user_input:
@@ -265,7 +269,7 @@ class TerminalChannel(InteractionChannel):
                 if self._handle_special_command(user_input):
                     continue
                 print()
-                self.manager.handle_user_text(user_input)
+                self.manager.handle_user_text(user_input, session_id=self.session_id, client_type="terminal")
             except KeyboardInterrupt:
                 print()
                 break
@@ -284,6 +288,8 @@ class TerminalChannel(InteractionChannel):
 
     def handle_event(self, event: Dict[str, Any]) -> None:
         event_type = event.get("type", "")
+        if event.get("session_id") not in (None, self.session_id):
+            return
         payload = event.get("payload", {}) or {}
 
         if event_type == "thinking_started":
@@ -345,11 +351,11 @@ class TerminalChannel(InteractionChannel):
             return True
 
         if text_lower in ["/stop", "stop", "停止", "取消", "cancel"]:
-            self.manager.cancel_current()
+            self.manager.cancel_current(self.session_id)
             return True
 
         if text_lower in ["确认", "confirm", "/confirm", "继续", "ok"]:
-            self.manager.confirm_human(text)
+            self.manager.confirm_human(text, session_id=self.session_id)
             return True
 
         if text_lower in ["world", "/world", "设置world", "切换world", "默认world", "world设置"]:
@@ -474,7 +480,7 @@ class TerminalChannel(InteractionChannel):
             print()
 
         store.save(world)
-        resolver = self.manager.reload_world(world_path, config)
+        resolver = self.manager.reload_world(world_path, config, session_id=self.session_id)
         self.ui.print_info(
             f"已保存 world 描述，当前默认地图: {resolver.world.default_map_name or resolver.world.default_map_id or '未设置'}"
         )
@@ -487,8 +493,9 @@ class TerminalChannel(InteractionChannel):
             return True
 
         config = get_config()
-        current_world_name = self.manager.brain.session_context.get("world_name") if self.manager.brain else None
-        current_default_map = self.manager.brain.session_context.get("world_default_map") if self.manager.brain else None
+        session_context = self.manager.get_session_context(self.session_id)
+        current_world_name = session_context.get("world_name")
+        current_default_map = session_context.get("world_default_map")
         current_world_path = self.manager.resolve_world_path(config.world.path) if getattr(config.world, "path", None) else None
 
         print()
@@ -567,7 +574,7 @@ class TerminalChannel(InteractionChannel):
         config.world.path = relative_world_path
         config.save_to_file(self.manager.config_path)
 
-        resolver = self.manager.reload_world(world_path, config)
+        resolver = self.manager.reload_world(world_path, config, session_id=self.session_id)
         self.ui.print_info(f"已将 {selected_map.name} 设为默认 world，后续将优先使用 {world.name}。")
         self.ui.print_info(f"world 文件: {relative_world_path}")
 

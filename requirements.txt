@@ -7,3 +7,7 @@ websocket-client>=1.8.0
 
 # Optional but recommended for local callback testing tools
 Flask>=3.0,<4.0
+
+# Android gateway (HTTP + WebSocket API)
+fastapi>=0.110.0
+uvicorn>=0.29.0
