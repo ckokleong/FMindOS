@@ -700,6 +700,14 @@ class SubmitMissionSkill(Skill):
             self._mission_manager_adapter_id = adapter_id
         return self._mission_manager
 
+    def cancel_active_mission(self, reason: str = "mission cancelled") -> bool:
+        if self._mission_manager is None:
+            return False
+        cancel = getattr(self._mission_manager, "cancel_current", None)
+        if not callable(cancel):
+            return False
+        return bool(cancel(reason))
+
     def execute(self, params: Dict[str, Any], context: SkillContext) -> SkillResult:
         tasks = params.get("tasks")
         if not isinstance(tasks, list):

@@ -9,6 +9,11 @@ from typing import Any, Dict, Optional
 
 # ========== 配置数据类 ==========
 
+
+def _read_json_file(path: Path) -> Any:
+    """Read JSON files while tolerating a UTF-8 BOM."""
+    return json.loads(path.read_text(encoding="utf-8-sig"))
+
 @dataclass
 class LLMConfig:
     """LLM配置 - 支持多提供商"""
@@ -150,9 +155,8 @@ class FishMindConfig:
         
         if not path.exists():
             return cls()
-        
-        with open(path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+
+        data = _read_json_file(path)
         
         return cls._from_dict(data)
     
@@ -406,7 +410,7 @@ def load_runtime_config(config_path: str | Path | None = None) -> dict[str, Any]
     path = resolve_config_path(config_path)
     if not path.exists():
         return {}
-    raw_text = path.read_text(encoding="utf-8").strip()
+    raw_text = path.read_text(encoding="utf-8-sig").strip()
     if not raw_text:
         return {}
     data = json.loads(raw_text)

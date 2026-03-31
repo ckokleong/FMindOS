@@ -138,7 +138,12 @@ class Skill(ABC):
             
             # 修复：将技能上下文数据写回外部状态
             if context_dict is not None:
-                context_dict.update(context.session_data)
+                merged_context = dict(context.session_data)
+                shared_session_data = getattr(context, "shared_session_data", None)
+                if isinstance(shared_session_data, dict):
+                    merged_context.update(shared_session_data)
+                context_dict.clear()
+                context_dict.update(merged_context)
             return result_dict
         except Exception as e:
             import traceback

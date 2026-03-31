@@ -132,6 +132,12 @@ class TerminalUI:
             print()
         print(f"{self._label('user', 'user')} ", end="", flush=True)
 
+    def print_external_user(self, text: str, source_client: str = "android") -> None:
+        source = str(source_client or "").strip().lower()
+        label = "APP" if source == "android" else (source.upper() if source else "REMOTE")
+        print(f"{self._style(f'[{label}]', 'user')} {text}")
+        self._last_was_skill = False
+
     def print_robot_response(self, text: str) -> None:
         print(f"{self._label('dog', 'dog')} {text}")
         self._last_was_skill = False
@@ -261,7 +267,7 @@ class TerminalChannel(InteractionChannel):
 
         while self._running:
             try:
-                if not self.manager.is_async_mission_active(self.session_id):
+                if not self.manager.has_pending_session_work(self.session_id):
                     self.ui.print_user_prompt()
                 user_input = input().strip()
                 if not user_input:
@@ -288,9 +294,17 @@ class TerminalChannel(InteractionChannel):
 
     def handle_event(self, event: Dict[str, Any]) -> None:
         event_type = event.get("type", "")
+        payload = event.get("payload", {}) or {}
+
+        if event_type == "user_input":
+            source_client = str(payload.get("source_client", "")).strip().lower()
+            if source_client == "terminal":
+                return
+            self.ui.print_external_user(str(payload.get("text", "")), source_client=source_client)
+            return
+
         if event.get("session_id") not in (None, self.session_id):
             return
-        payload = event.get("payload", {}) or {}
 
         if event_type == "thinking_started":
             if not self.spinner:
@@ -334,7 +348,11 @@ class TerminalChannel(InteractionChannel):
             self.ui.print_error(str(payload.get("message", "")))
             return
 
-        if event_type == "prompt_ready" and self._running:
+        if (
+            event_type == "prompt_ready"
+            and self._running
+            and not self.manager.has_pending_session_work(self.session_id)
+        ):
             sys.stdout.write("\n")
             sys.stdout.flush()
             self.ui.print_user_prompt()

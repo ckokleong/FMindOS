@@ -259,7 +259,26 @@ class FishMindOS:
         receiver.start()
         self.callback_receiver = receiver
         return callback.get_url()
-    
+
+    @staticmethod
+    def _probe_callback_receiver(host: str, port: int, timeout: float = 3.0) -> tuple:
+        """向 /healthz 发送 GET 请求，返回 (ok: bool, err_msg: str)。"""
+        import http.client
+        try:
+            conn = http.client.HTTPConnection(host, port, timeout=timeout)
+            conn.request("GET", "/healthz")
+            resp = conn.getresponse()
+            if resp.status == 200:
+                return True, ""
+            return False, f"HTTP {resp.status}"
+        except Exception as exc:
+            return False, str(exc)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
     def initialize(
         self,
         nav_server_host: str = "127.0.0.1",
@@ -336,7 +355,12 @@ class FishMindOS:
             if getattr(config, "callback", None) and config.callback.enabled and callback_url:
                 print(f"   Callback: OK {callback_url}")
                 if callback_receiver_url:
-                    print(f"   Callback receiver: OK http://{config.callback.host}:{config.callback.port}")
+                    probe_host = "127.0.0.1" if config.callback.host == "0.0.0.0" else config.callback.host
+                    probe_ok, probe_err = self._probe_callback_receiver(probe_host, config.callback.port)
+                    if probe_ok:
+                        print(f"   Callback receiver: OK http://{config.callback.host}:{config.callback.port}")
+                    else:
+                        print(f"   Callback receiver: ERR http://{config.callback.host}:{config.callback.port} ({probe_err})")
             
             # 执行健康检查
             health = self.adapter.connect()

@@ -19,6 +19,8 @@ THINKING_STARTED = "thinking_started"
 THINKING_STOPPED = "thinking_stopped"
 INTERACTION_COMPLETE = "interaction_complete"
 PROMPT_READY = "prompt_ready"
+HUMAN_CONFIRM_REQUIRED = "human_confirm_required"
+USER_INPUT = "user_input"
 
 # ── Task execution ─────────────────────────────────────────────────────
 PLAN = "plan"
@@ -26,6 +28,7 @@ ACTION = "action"
 RESULT = "result"
 ACTUAL_MISSION_TASKS = "actual_mission_tasks"
 ASYNC_MISSION_DONE = "async_mission_done"
+MISSION_PROGRESS = "mission_progress"
 
 # ── Text output ────────────────────────────────────────────────────────
 MESSAGE = "message"
@@ -45,11 +48,14 @@ ALL: frozenset[str] = frozenset(
         THINKING_STOPPED,
         INTERACTION_COMPLETE,
         PROMPT_READY,
+        HUMAN_CONFIRM_REQUIRED,
+        USER_INPUT,
         PLAN,
         ACTION,
         RESULT,
         ACTUAL_MISSION_TASKS,
         ASYNC_MISSION_DONE,
+        MISSION_PROGRESS,
         MESSAGE,
         INFO,
         ERROR,

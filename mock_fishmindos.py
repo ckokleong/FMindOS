@@ -2,6 +2,7 @@
 FishMindOS Mock - 真实 LLM + Mock Adapter
 用于测试 LLM 决策能力，不控制真机器人
 """
+from __future__ import annotations
 
 import sys
 import threading

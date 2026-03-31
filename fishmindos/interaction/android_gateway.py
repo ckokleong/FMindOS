@@ -46,6 +46,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from fishmindos.config import get_config
 from fishmindos.interaction.channels.base import InteractionChannel
 from fishmindos.interaction import events as ev
 
@@ -105,6 +106,8 @@ class AndroidGateway(InteractionChannel):
         self.host = host
         self.port = port
         # session_id -> (asyncio.Queue, asyncio.AbstractEventLoop)
+        # Keep only the latest connection per session, but protect against an
+        # older socket removing a newer mapping during reconnect races.
         self._ws_connections: Dict[str, tuple] = {}
         self._lock = threading.Lock()
         self._server_thread: Optional[threading.Thread] = None
@@ -117,18 +120,33 @@ class AndroidGateway(InteractionChannel):
         """Required by InteractionChannel; delegates to internal router."""
         self._on_event(event)
 
+    def _is_debug_enabled(self) -> bool:
+        try:
+            return bool(getattr(get_config().app, "debug", False))
+        except Exception:
+            return False
+
+    def _debug_print(self, message: str) -> None:
+        if self._is_debug_enabled():
+            print(message, flush=True)
+
     def _on_event(self, event: Dict[str, Any]) -> None:
         """Route an interaction event to the matching WebSocket queue.
 
         Called from arbitrary threads; uses call_soon_threadsafe for safety.
         """
         session_id = event.get("session_id")
+        event_type = event.get("type")
         with self._lock:
             if session_id is not None:
                 conn = self._ws_connections.get(session_id)
                 targets = [conn] if conn is not None else []
             else:
                 targets = list(self._ws_connections.values())
+
+        self._debug_print(
+            f"[AndroidGateway] route event type={event_type} session={session_id} targets={len(targets)}"
+        )
 
         for conn in targets:
             queue, loop = conn
@@ -213,7 +231,7 @@ class AndroidGateway(InteractionChannel):
         async def create_session(req: CreateSessionReq):
             sid = req.session_id or f"android-{uuid.uuid4().hex[:8]}"
             gateway.manager.get_session(sid, client_type=req.client_type)
-            snapshot = gateway.manager.sessions.get_snapshot(sid)
+            snapshot = gateway.manager.get_session_snapshot(sid)
             return {"ok": True, "session_id": sid, "state": snapshot}
 
         @app.post("/api/chat/send")
@@ -245,7 +263,7 @@ class AndroidGateway(InteractionChannel):
                     gateway.manager.handle_user_text,
                     req.text,
                     req.session_id,
-                    session.client_type,
+                    "android",
                 )
             finally:
                 gateway.manager.remove_listener(_collect)
@@ -257,19 +275,23 @@ class AndroidGateway(InteractionChannel):
         async def chat_confirm(req: ChatConfirmReq):
             if gateway.manager.sessions.get(req.session_id) is None:
                 return _not_found(req.session_id)
-            gateway.manager.confirm_human(req.input, session_id=req.session_id)
+            print(
+                f"[AndroidGateway] HTTP confirm session={req.session_id} input={req.input}",
+                flush=True,
+            )
+            gateway.manager.confirm_human(req.input, session_id=req.session_id, client_type="android")
             return {"ok": True}
 
         @app.post("/api/chat/stop")
         async def chat_stop(req: ChatStopReq):
             if gateway.manager.sessions.get(req.session_id) is None:
                 return _not_found(req.session_id)
-            gateway.manager.cancel_current(req.session_id)
+            gateway.manager.cancel_current(req.session_id, client_type="android")
             return {"ok": True}
 
         @app.get("/api/session/state")
         async def session_state(session_id: str = Query(..., description="Session ID")):
-            snapshot = gateway.manager.sessions.get_snapshot(session_id)
+            snapshot = gateway.manager.get_session_snapshot(session_id)
             if snapshot is None:
                 return _not_found(session_id)
             return {"ok": True, "state": snapshot}
@@ -293,13 +315,14 @@ class AndroidGateway(InteractionChannel):
             await websocket.accept()
             loop = asyncio.get_running_loop()
             queue: asyncio.Queue = asyncio.Queue(maxsize=256)
+            connection = (queue, loop)
 
             with gateway._lock:
-                gateway._ws_connections[session_id] = (queue, loop)
+                gateway._ws_connections[session_id] = connection
 
             # Phase 6: push current state immediately so the client can
             # restore its UI after a reconnect.
-            snapshot = gateway.manager.sessions.get_snapshot(session_id)
+            snapshot = gateway.manager.get_session_snapshot(session_id)
             if snapshot:
                 await websocket.send_json(
                     {
@@ -314,6 +337,10 @@ class AndroidGateway(InteractionChannel):
                 while True:
                     try:
                         event = await asyncio.wait_for(queue.get(), timeout=25.0)
+                        event_type = event.get("type")
+                        gateway._debug_print(
+                            f"[AndroidGateway] send event type={event_type} session={session_id}"
+                        )
                         await websocket.send_json(event)
                     except asyncio.TimeoutError:
                         # Keepalive ping — prevents silent drop by mobile NAT/proxy.
@@ -327,6 +354,7 @@ class AndroidGateway(InteractionChannel):
                 pass
             finally:
                 with gateway._lock:
-                    gateway._ws_connections.pop(session_id, None)
+                    if gateway._ws_connections.get(session_id) == connection:
+                        gateway._ws_connections.pop(session_id, None)
 
         return app

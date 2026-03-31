@@ -30,6 +30,10 @@ class MissionManager:
         self._active_target: str = ""
         self._awaiting_event: Optional[str] = None
         self._session_state: Optional[Dict[str, Any]] = None
+        self._mission_steps: List[Dict[str, Any]] = []
+        self._mission_step_statuses: List[str] = []
+        self._current_task: Optional[Dict[str, Any]] = None
+        self._current_step_index: int = -1
 
         cfg = get_config()
         self._wait_reminder_enabled = bool(getattr(cfg.mission, "wait_confirm_reminder_enabled", True))
@@ -50,12 +54,148 @@ class MissionManager:
     def _log(self, message: str) -> None:
         print(f"\n{message}", flush=True)
 
+    def _get_session_id(self) -> Optional[str]:
+        if isinstance(self._session_state, dict):
+            session_id = self._session_state.get("session_id")
+            if session_id:
+                return str(session_id)
+        return None
+
+    def _task_label(self, task: Optional[Dict[str, Any]]) -> str:
+        if not isinstance(task, dict):
+            return "执行任务"
+        action = str(task.get("action", "") or "").lower()
+        if action == "goto":
+            return f"前往 {task.get('target') or '目标点'}"
+        if action == "dock":
+            return "回充"
+        if action == "wait_confirm":
+            return "等待人工确认"
+        if action == "speak":
+            text = str(task.get("text", "") or "").strip()
+            if len(text) > 24:
+                text = text[:21] + "..."
+            return f"播报：{text or '提示语'}"
+        if action == "query":
+            return "查询状态"
+        if action == "light":
+            color = str(task.get("color") or task.get("code") or "").strip()
+            return f"灯光 {color}" if color else "调整灯光"
+        if action == "stop_nav":
+            return "停止导航"
+        return action or "执行任务"
+
+    def _publish_progress(
+        self,
+        status: str,
+        *,
+        task: Optional[Dict[str, Any]] = None,
+        step_index: Optional[int] = None,
+        message: Optional[str] = None,
+        detail: Optional[str] = None,
+    ) -> None:
+        with self._lock:
+            progress_task = dict(task) if isinstance(task, dict) else (dict(self._current_task) if isinstance(self._current_task, dict) else None)
+            current_index = self._current_step_index if step_index is None else step_index
+            total_steps = len(self._mission_steps)
+
+        payload: Dict[str, Any] = {
+            "session_id": self._get_session_id(),
+            "status": status,
+            "step_index": current_index,
+            "step_number": current_index + 1 if isinstance(current_index, int) and current_index >= 0 else None,
+            "total_steps": total_steps,
+            "label": self._task_label(progress_task),
+        }
+        if isinstance(progress_task, dict):
+            payload["action"] = str(progress_task.get("action", "") or "").lower()
+        if message:
+            payload["message"] = str(message)
+        if detail:
+            payload["detail"] = str(detail)
+        self._remember_progress_snapshot(
+            status,
+            task=progress_task,
+            step_index=current_index,
+            message=message,
+            detail=detail,
+            label=payload["label"],
+        )
+        self.event_bus.publish("mission_progress", payload)
+
     def bind_session_state(self, session_state: Optional[Dict[str, Any]]) -> None:
         self._session_state = session_state if isinstance(session_state, dict) else None
+        self._sync_session_mission_snapshot()
 
     def _set_session_value(self, key: str, value: Any) -> None:
         if isinstance(self._session_state, dict):
             self._session_state[key] = value
+
+    def _sync_session_mission_snapshot(self) -> None:
+        with self._lock:
+            tasks = [dict(task) if isinstance(task, dict) else {"action": str(task)} for task in self._mission_steps]
+            statuses = list(self._mission_step_statuses)
+            current_step_index = self._current_step_index if self._current_step_index >= 0 else None
+        self._set_session_value("mission_tasks", tasks)
+        self._set_session_value("mission_step_statuses", statuses)
+        self._set_session_value("mission_current_step_index", current_step_index)
+
+    def _clear_session_mission_snapshot(self) -> None:
+        with self._lock:
+            self._mission_steps = []
+            self._mission_step_statuses = []
+            self._current_task = None
+            self._current_step_index = -1
+        self._set_session_value("mission_tasks", [])
+        self._set_session_value("mission_step_statuses", [])
+        self._set_session_value("mission_current_step_index", None)
+        self._set_session_value("mission_progress_status", None)
+        self._set_session_value("mission_progress_message", None)
+        self._set_session_value("mission_progress_detail", None)
+        self._set_session_value("mission_progress_label", None)
+
+    def _remember_progress_snapshot(
+        self,
+        status: str,
+        *,
+        task: Optional[Dict[str, Any]] = None,
+        step_index: Optional[int] = None,
+        message: Optional[str] = None,
+        detail: Optional[str] = None,
+        label: Optional[str] = None,
+    ) -> None:
+        with self._lock:
+            if status == "all_completed":
+                self._mission_step_statuses = [
+                    "failed" if current == "failed" else "done"
+                    for current in self._mission_step_statuses
+                ]
+                self._current_step_index = -1
+            elif isinstance(step_index, int) and 0 <= step_index < len(self._mission_step_statuses):
+                for index in range(step_index):
+                    if self._mission_step_statuses[index] in {"pending", "running", "waiting"}:
+                        self._mission_step_statuses[index] = "done"
+                mapped_status = "done" if status == "completed" else status
+                self._mission_step_statuses[step_index] = mapped_status
+                self._current_step_index = step_index if mapped_status in {"running", "waiting", "failed"} else -1
+
+            if self._mission_steps and len(self._mission_step_statuses) < len(self._mission_steps):
+                self._mission_step_statuses.extend(
+                    ["pending"] * (len(self._mission_steps) - len(self._mission_step_statuses))
+                )
+
+            tasks = [dict(item) if isinstance(item, dict) else {"action": str(item)} for item in self._mission_steps]
+            statuses = list(self._mission_step_statuses)
+            current_step_index = self._current_step_index if self._current_step_index >= 0 else None
+
+        task_label = label or self._task_label(task)
+        self._set_session_value("mission_tasks", tasks)
+        self._set_session_value("mission_step_statuses", statuses)
+        self._set_session_value("mission_current_step_index", current_step_index)
+        self._set_session_value("mission_progress_status", status)
+        self._set_session_value("mission_progress_message", message)
+        self._set_session_value("mission_progress_detail", detail)
+        self._set_session_value("mission_progress_label", task_label)
 
     def _get_session_list(self, key: str) -> List[str]:
         if not isinstance(self._session_state, dict):
@@ -95,6 +235,8 @@ class MissionManager:
                 self.current_mission_queue.extend(tasks)
                 return True
             self.current_mission_queue = list(tasks)
+            self._mission_steps = [dict(task) if isinstance(task, dict) else {"action": str(task)} for task in tasks]
+            self._mission_step_statuses = ["pending"] * len(self._mission_steps)
             self.is_busy = True
             self.waiting_for_human = False
             self.last_error = ""
@@ -103,6 +245,13 @@ class MissionManager:
             self._active_wait_confirm_meta = {}
             self._active_target = ""
             self._awaiting_event = None
+            self._current_task = None
+            self._current_step_index = -1
+            self._set_session_value("mission_progress_status", "pending")
+            self._set_session_value("mission_progress_message", None)
+            self._set_session_value("mission_progress_detail", None)
+            self._set_session_value("mission_progress_label", None)
+            self._sync_session_mission_snapshot()
             self._stop_wait_confirm_reminder()
 
         self._execute_next()
@@ -118,6 +267,45 @@ class MissionManager:
                 or bool(self._awaiting_event)
             )
 
+    def cancel_current(self, reason: str = "mission cancelled") -> bool:
+        """Force-clear the current async mission and reset session wait state."""
+        with self._lock:
+            had_pending = bool(
+                self.is_busy
+                or self.waiting_for_human
+                or self.current_mission_queue
+                or bool(self._awaiting_event)
+            )
+            if not had_pending:
+                return False
+
+            self.is_busy = False
+            self.waiting_for_human = False
+            self.current_mission_queue = []
+            self.last_error = reason
+            self._last_speak_text = ""
+            self._active_wait_confirm_text = ""
+            self._active_wait_confirm_meta = {}
+            self._active_target = ""
+            self._awaiting_event = None
+
+        self._set_session_value("waiting_for_human", False)
+        self._set_session_value("human_prompt_text", None)
+        self._stop_wait_confirm_reminder()
+
+        stop_nav = getattr(self.adapter, "stop_navigation", None)
+        if callable(stop_nav):
+            try:
+                stop_nav()
+            except Exception:
+                pass
+
+        self._publish_progress("failed", message="任务已取消", detail=reason)
+        self._log(f"[小脑] 任务取消: {reason}")
+        self._clear_session_mission_snapshot()
+        self.event_bus.publish("mission_failed", {"error": reason, "detail": {"cancelled": True}})
+        return True
+
     def _execute_next(self, event_data=None):
         """Dispatch next action without blocking waits."""
         with self._lock:
@@ -130,14 +318,21 @@ class MissionManager:
                 self.waiting_for_human = False
                 self._awaiting_event = None
                 self._stop_wait_confirm_reminder()
+                self._current_task = None
+                self._current_step_index = -1
                 try:
                     self.adapter.play_audio("任务全部完成")
                 except Exception:
                     pass
                 self._log("[小脑] 任务全部完成")
+                self._publish_progress("all_completed", message="任务全部完成")
+                self._clear_session_mission_snapshot()
                 self.event_bus.publish("mission_completed", {"status": "completed"})
                 return
+            step_index = len(self._mission_steps) - len(self.current_mission_queue)
             task = self.current_mission_queue.pop(0)
+            self._current_task = dict(task) if isinstance(task, dict) else {"action": str(task)}
+            self._current_step_index = step_index
 
         if not isinstance(task, dict):
             self._on_action_failed({"error": "task item is not a dict"})
@@ -162,6 +357,7 @@ class MissionManager:
             with self._lock:
                 self._awaiting_event = "nav_arrived"
                 self._active_target = str(target or "").strip()
+            self._publish_progress("running", task=task, step_index=step_index, message=f"正在前往 {target}")
             self._log(f"[小脑] 已下发前往 {target}，等待到达回调...")
             return
 
@@ -184,6 +380,7 @@ class MissionManager:
             with self._lock:
                 self._awaiting_event = "dock_completed"
                 self._active_target = "回充点"
+            self._publish_progress("running", task=task, step_index=step_index, message="正在回充")
             self._log("[小脑] 已下发回充，等待回充完成回调...")
             return
 
@@ -196,6 +393,7 @@ class MissionManager:
             if not ok:
                 self.event_bus.publish("action_failed", {"action": "stop_nav"})
                 return
+            self._publish_progress("completed", task=task, step_index=step_index, message="已停止导航")
             self._log("[Mission] navigation stopped")
             self._execute_next()
             return
@@ -211,6 +409,16 @@ class MissionManager:
                 self._active_wait_confirm_text = reminder_text
                 self._active_wait_confirm_meta = dict(task)
                 self._awaiting_event = "human_confirmed"
+            self._set_session_value("waiting_for_human", True)
+            self._set_session_value("human_prompt_text", reminder_text)
+            self.event_bus.publish(
+                "human_confirm_required",
+                {
+                    "session_id": self._session_state.get("session_id") if isinstance(self._session_state, dict) else None,
+                    "message": reminder_text,
+                },
+            )
+            self._publish_progress("waiting", task=task, step_index=step_index, message="等待现场确认", detail=reminder_text)
             self._start_wait_confirm_reminder(reminder_text)
             self._log("[小脑] 进入人机协同等待状态，悬停中...")
             return
@@ -224,6 +432,7 @@ class MissionManager:
             if not ok:
                 self.event_bus.publish("action_failed", {"action": "light"})
                 return
+            self._publish_progress("completed", task=task, step_index=step_index, message="灯光动作已完成")
             self._execute_next()
             return
 
@@ -238,6 +447,7 @@ class MissionManager:
                 self.event_bus.publish("action_failed", {"action": "speak"})
                 return
             self._last_speak_text = str(text or "").strip()
+            self._publish_progress("completed", task=task, step_index=step_index, message="播报已完成")
             self._execute_next()
             return
 
@@ -248,6 +458,7 @@ class MissionManager:
             except Exception as exc:
                 self.event_bus.publish("action_failed", {"action": "query", "error": str(exc)})
                 return
+            self._publish_progress("completed", task=task, step_index=step_index, message="状态查询已完成")
             self._execute_next()
             return
 
@@ -265,6 +476,7 @@ class MissionManager:
             self._active_target = ""
         if arrived_target:
             self._set_session_value("current_location", arrived_target)
+        self._publish_progress("completed", message=f"已到达 {arrived_target or '目标点'}")
         self._log("[小脑] 收到到达事件，触发下一步")
         time.sleep(0.5)
         self._execute_next(event_data=data)
@@ -276,6 +488,7 @@ class MissionManager:
             self._awaiting_event = None
             self._active_target = ""
         self._set_session_value("current_location", "回充点")
+        self._publish_progress("completed", message="回充已完成")
         self._log("[小脑] 收到回充完成事件，触发下一步")
         time.sleep(0.5)
         self._execute_next(event_data=data)
@@ -293,6 +506,8 @@ class MissionManager:
             self._active_wait_confirm_text = ""
             self._active_wait_confirm_meta = {}
             self._awaiting_event = None
+        self._set_session_value("waiting_for_human", False)
+        self._set_session_value("human_prompt_text", None)
         self._stop_wait_confirm_reminder()
         phase = str(wait_meta.get("handover_phase", "") or "").strip().lower()
         item_name = str(wait_meta.get("item_name", "") or "").strip()
@@ -308,6 +523,7 @@ class MissionManager:
             else:
                 items = []
             self._sync_carrying_state(items)
+        self._publish_progress("completed", message="已收到人工确认，继续执行")
         self._log("[小脑] 收到人类确认事件，继续执行下一步。")
         time.sleep(0.2)
         self._execute_next(event_data=data)
@@ -320,8 +536,14 @@ class MissionManager:
             self._active_wait_confirm_meta = {}
             self._active_target = ""
             self._awaiting_event = None
+        self._set_session_value("waiting_for_human", False)
+        self._set_session_value("human_prompt_text", None)
         self._stop_wait_confirm_reminder()
         self.last_error = f"action failed: {data}"
+        self._publish_progress("failed", message="任务执行失败", detail=str(data))
+        with self._lock:
+            self._current_task = None
+            self._current_step_index = -1
         self._log(f"[小脑] 动作失败，任务终止: {data}")
         self.event_bus.publish("mission_failed", {"error": self.last_error, "detail": data})
 

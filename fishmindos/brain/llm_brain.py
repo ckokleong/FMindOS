@@ -88,6 +88,16 @@ class LLMBrain:
             "current_intent_type": None,
             "pending_clarification": None,
         }
+
+    def _is_debug_enabled(self) -> bool:
+        try:
+            return bool(getattr(get_config().app, "debug", False))
+        except Exception:
+            return False
+
+    def _debug_print(self, message: str) -> None:
+        if self._is_debug_enabled():
+            print(f"[DEBUG] {message}")
     
     def _extract_delivery_slots(self, user_input: str) -> Dict[str, Any]:
         text = str(user_input or "").strip()
@@ -216,6 +226,78 @@ class LLMBrain:
             return f"{item}要先去哪里取？取到后送到哪里？"
 
         return llm_question
+
+    def _split_delivery_clarification_parts(self, supplement: str) -> List[str]:
+        text = str(supplement or "").strip()
+        if not text:
+            return []
+
+        text = re.sub(r"[\r\n]+", "，", text)
+        text = re.sub(
+            r"\s+(?=(?:[（(【\[]?\s*(?:[0-9一二三四五六七八九十两]+)\s*[\).、:：]))",
+            "，",
+            text,
+        )
+        return [part.strip() for part in re.split(r"[，,;；/]", text) if part.strip()]
+
+    def _strip_delivery_clarification_prefix(self, text: str) -> str:
+        value = str(text or "").strip()
+        if not value:
+            return ""
+
+        value = re.sub(
+            r"^[（(【\[]?\s*(?:第?\s*[0-9一二三四五六七八九十两]+)\s*(?:项|条|步|个)?\s*[\).、:：-]?\s*",
+            "",
+            value,
+        )
+        value = re.sub(r"^(?:回答|答案)\s*[:：]?\s*", "", value)
+        value = re.sub(
+            r"^(?:位置|地点|取货地|拿货地|取件地|来源地|起点|送达地|目的地|终点)\s*[:：]\s*",
+            "",
+            value,
+        )
+        return value.strip()
+
+    def _build_pending_delivery_clarification(
+        self,
+        user_input: str,
+        reply_text: str,
+    ) -> Optional[Dict[str, Any]]:
+        base_input = str(user_input or "").strip()
+        if not base_input:
+            return None
+
+        slots = self._extract_delivery_slots(base_input)
+        if not slots.get("is_delivery_intent"):
+            return None
+
+        clarification = self._needs_delivery_clarification(base_input) or {}
+        missing = list(clarification.get("missing", []))
+        normalized_reply = re.sub(r"\s+", "", str(reply_text or ""))
+
+        source_markers = [
+            "要去哪", "去哪里", "从哪里", "哪里取", "先去哪里",
+            "什么位置", "什么地点", "什么地方", "哪个地方",
+        ]
+        target_markers = [
+            "送到哪里", "送去哪里", "送往哪里", "送哪里",
+            "再送到哪里", "取到后要送到哪里", "拿到后要送到哪里",
+        ]
+
+        if any(marker in normalized_reply for marker in source_markers) and "source" not in missing:
+            missing.append("source")
+        if any(marker in normalized_reply for marker in target_markers) and "target" not in missing:
+            missing.append("target")
+
+        ordered_missing = [name for name in ("source", "target") if name in missing]
+        if not ordered_missing:
+            return None
+
+        return {
+            "base_input": base_input,
+            "missing": ordered_missing,
+            "question": str(reply_text or "").strip(),
+        }
 
     def _looks_like_new_command_input(self, user_input: str) -> bool:
         text = str(user_input or "").strip()
@@ -346,6 +428,7 @@ class LLMBrain:
         if not base_input:
             self.session_context.pop("pending_delivery_clarification", None)
             return user_input
+        base_input_for_merge = base_input.rstrip(" ，,。.;；")
 
         supplement = str(user_input or "").strip()
         if not supplement:
@@ -357,41 +440,50 @@ class LLMBrain:
             return supplement
 
         def _clean_location(text: str) -> str:
-            text = str(text or "").strip()
+            text = self._strip_delivery_clarification_prefix(text)
             text = re.sub(r"^(去|到|从|在|拿|取|送到|送去|交给|给)", "", text)
             text = re.sub(r"(拿|取|买|带|领)$", "", text)
             return text.strip(" ，,。.;；")
 
+        parts = self._split_delivery_clarification_parts(supplement)
+        if not parts:
+            parts = [supplement]
+
         merged = ""
         if missing == ["source", "target"]:
-            parts = re.split(r"[，,;；]\s*", supplement, maxsplit=1)
             if len(parts) == 2:
                 source = _clean_location(parts[0])
                 target = _clean_location(parts[1])
                 if source and target and self._looks_like_location_answer(source) and self._looks_like_location_answer(target):
-                    merged = f"{base_input}，去{source}拿，送到{target}"
-            elif len(parts) == 1:
+                    merged = f"{base_input_for_merge}，去{source}拿，送到{target}"
+            elif len(parts) >= 1:
                 source = _clean_location(parts[0])
                 if source and self._looks_like_location_answer(source):
-                    merged = f"{base_input}，去{source}拿"
+                    updated_base = f"{base_input_for_merge}，去{source}拿"
+                    pending["base_input"] = updated_base
+                    pending["missing"] = ["target"]
+                    self.session_context["pending_delivery_clarification"] = pending
+                    return updated_base
                 elif source and self._looks_like_object_answer(source):
                     updated_base = self._replace_delivery_object(base_input, source)
                     pending["base_input"] = updated_base
+                    pending["missing"] = ["source", "target"]
                     self.session_context["pending_delivery_clarification"] = pending
                     return updated_base
         elif missing == ["source"]:
-            source = _clean_location(supplement)
+            source = _clean_location(parts[0])
             if source and self._looks_like_location_answer(source):
-                merged = f"{base_input}，去{source}拿"
+                merged = f"{base_input_for_merge}，去{source}拿"
             elif source and self._looks_like_object_answer(source):
                 updated_base = self._replace_delivery_object(base_input, source)
                 pending["base_input"] = updated_base
                 self.session_context["pending_delivery_clarification"] = pending
                 return updated_base
         elif missing == ["target"]:
-            target = _clean_location(supplement)
+            target_candidate = parts[-1] if len(parts) > 1 else parts[0]
+            target = _clean_location(target_candidate)
             if target and self._looks_like_location_answer(target):
-                merged = f"{base_input}，送到{target}"
+                merged = f"{base_input_for_merge}，送到{target}"
             elif target and self._looks_like_object_answer(target):
                 updated_base = self._replace_delivery_object(base_input, target)
                 pending["base_input"] = updated_base
@@ -404,7 +496,7 @@ class LLMBrain:
             return supplement
 
         self.session_context.pop("pending_delivery_clarification", None)
-        print("[DEBUG] 使用补充信息合并任务指令")
+        self._debug_print("使用补充信息合并任务指令")
         return merged
 
     def _extract_json_object(self, text: str) -> Optional[Dict[str, Any]]:
@@ -446,6 +538,332 @@ class LLMBrain:
             return None
         return data
 
+    def _looks_like_status_query_text(self, user_input: str) -> bool:
+        normalized = re.sub(r"\s+", "", str(user_input or ""))
+        if not normalized:
+            return False
+
+        direct_queries = [
+            "状态", "电量", "电池", "充电状态", "在充电吗", "位置", "在哪", "在哪里",
+            "现在在哪", "现在在哪里", "现在怎么样", "情况如何", "什么情况",
+        ]
+        if any(keyword in normalized for keyword in direct_queries):
+            return True
+
+        return (
+            "充电" in normalized
+            and any(marker in normalized for marker in ["吗", "？", "?", "状态", "多少"])
+        )
+
+    def _looks_like_world_locations_query_text(self, user_input: str) -> bool:
+        normalized = re.sub(r"\s+", "", str(user_input or ""))
+        if not normalized:
+            return False
+
+        keywords = [
+            "有哪些点", "有哪些地点", "有哪些路点", "这里有什么点", "这里有什么地点",
+            "可用地点", "地点列表", "路点列表", "列出地点", "列出路点", "能去哪些地方",
+            "能去哪些位置", "可以去哪些地方", "可以去哪些位置",
+        ]
+        return any(keyword in normalized for keyword in keywords)
+
+    def _looks_like_action_request_text(self, user_input: str) -> bool:
+        normalized = re.sub(r"\s+", "", str(user_input or ""))
+        if not normalized:
+            return False
+
+        keywords = [
+            "去", "到", "前往", "导航", "返回", "回来", "回去", "回充", "充电",
+            "开灯", "关灯", "亮灯", "播报", "播放", "说", "拿", "取", "送",
+            "买", "带", "领", "交给", "停止导航", "关闭导航", "取消导航",
+        ]
+        return any(keyword in normalized for keyword in keywords)
+
+    def _infer_intent_type(self, user_input: str) -> str:
+        text = str(user_input or "").strip()
+        if not text:
+            return ""
+        if self._looks_like_world_locations_query_text(text):
+            return ""
+        if self._looks_like_status_query_text(text):
+            return "status"
+        if self._looks_like_action_request_text(text):
+            return "mission"
+        return ""
+
+    def _looks_like_clarification_reply(self, reply_text: str) -> bool:
+        text = str(reply_text or "").strip()
+        if not text:
+            return False
+        intro_markers = ["我是小幻", "我可以帮你", "需要什么帮助", "比如\"去大厅\""]
+        if all(marker in text for marker in ["我是小幻", "我可以帮你"]):
+            return False
+        if any(marker in text for marker in intro_markers):
+            return False
+        clarification_markers = [
+            "请问", "请提供", "还需要", "需要知道", "需要确认",
+            "要去哪", "去哪里", "从哪里", "送到哪里", "送去哪里", "拿什么", "取什么",
+            "哪个地方", "什么地点", "什么位置", "先去哪里", "再送到哪里",
+        ]
+        return any(marker in text for marker in clarification_markers)
+
+    def _extract_item_name(self, user_input: str) -> str:
+        normalized = re.sub(r"\s+", "", str(user_input or ""))
+        if not normalized:
+            return ""
+
+        common_items = [
+            "快递", "包裹", "外卖", "奶茶", "咖啡", "饮料", "文件",
+            "纸巾", "纸", "钥匙", "充电器", "药", "水", "物品", "东西",
+        ]
+        for item in common_items:
+            if item in normalized:
+                return item
+
+        match = re.search(
+            r"(?:拿|取|买|带|领)(?:一个|一份|一包|一杯|一瓶|个|份|包|杯|瓶)?([^，。,.!?？！然后再并且回送到给从在去]{1,10})",
+            normalized,
+        )
+        if not match:
+            return ""
+
+        candidate = match.group(1).strip()
+        candidate = re.sub(r"^(一个|一份|一包|一杯|一瓶|个|份|包|杯|瓶)", "", candidate)
+        candidate = candidate.strip()
+        if not candidate:
+            return ""
+        return candidate[:10]
+
+    def _clean_location_name(self, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        text = re.sub(r"^(去|到|从|在|回到|返回|送到|送去|送往|交给|给)", "", text)
+        text = re.sub(r"(拿|取|买|带|领|送|交给|给)$", "", text)
+        return text.strip(" ，,。.;；")
+
+    def _extract_delivery_route(self, user_input: str) -> Dict[str, Any]:
+        normalized = re.sub(r"\s+", "", str(user_input or ""))
+        if not normalized:
+            return {}
+
+        source = ""
+        target = ""
+
+        source_match = re.search(r"(?:去|到|从|在)([^，。,.!?？！]{1,14}?)(?:拿|取|买|带|领|送)", normalized)
+        if source_match:
+            source = self._clean_location_name(source_match.group(1))
+
+        target_patterns = [
+            r"(?:送到|送去|送往|交给)([^，。,.!?？！再然后并且]{1,14})",
+            r"(?:给)([^，。,.!?？！再然后并且]{1,14})",
+            r"(?:拿到|带到)([^，。,.!?？！再然后并且]{1,14})",
+        ]
+        for pattern in target_patterns:
+            target_match = re.search(pattern, normalized)
+            if not target_match:
+                continue
+            target = self._clean_location_name(target_match.group(1))
+            if target:
+                break
+
+        return {
+            "source": source,
+            "target": target,
+            "return_charge": any(k in normalized for k in ["回充", "充电", "回桩"]),
+        }
+
+    def _extract_navigation_target(self, user_input: str) -> str:
+        normalized = re.sub(r"\s+", "", str(user_input or ""))
+        if not normalized:
+            return ""
+
+        patterns = [
+            r"(?:导航到|导航去|前往)([^，。,.!?？！然后再并且]{1,14})",
+            r"(?:去|到)([^，。,.!?？！然后再并且]{1,14})",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, normalized)
+            if not match:
+                continue
+            candidate = self._clean_location_name(match.group(1))
+            candidate = re.sub(r"(拿|取|买|带|领|送到|送去|送往|交给|回充|充电).*$", "", candidate)
+            candidate = candidate.strip()
+            if candidate:
+                return candidate
+        return ""
+
+    def _build_fallback_mission_tasks(self, user_input: str) -> Optional[List[Dict[str, Any]]]:
+        text = str(user_input or "").strip()
+        normalized = re.sub(r"\s+", "", text)
+        if not normalized:
+            return None
+
+        if any(keyword in normalized for keyword in ["停止导航", "关闭导航", "取消导航"]):
+            return [{"action": "stop_nav"}]
+
+        route = self._extract_delivery_route(text)
+        source = str(route.get("source") or "").strip()
+        target = str(route.get("target") or "").strip()
+        return_charge = bool(route.get("return_charge"))
+        item_name = (
+            self._extract_item_name(text)
+            or str(self.session_context.get("carrying_item") or "").strip()
+            or "物品"
+        )
+
+        carrying_item = str(self.session_context.get("carrying_item") or "").strip()
+        has_fetch_intent = any(keyword in normalized for keyword in ["拿", "取", "买", "领"])
+        has_dropoff_intent = any(keyword in normalized for keyword in ["送到", "送去", "送往", "交给", "拿到", "带到"])
+        needs_pickup = bool(source and target and not carrying_item)
+
+        tasks: List[Dict[str, Any]] = []
+
+        if source and (has_fetch_intent or needs_pickup):
+            tasks.append({"action": "goto", "target": source})
+            if not carrying_item:
+                tasks.append({"action": "speak", "text": f"请帮我把{item_name}放到篮子里"})
+                tasks.append({"action": "wait_confirm", "handover_phase": "pickup", "item_name": item_name})
+
+        if target and (has_dropoff_intent or carrying_item or has_fetch_intent):
+            tasks.append({"action": "goto", "target": target})
+            tasks.append({"action": "speak", "text": f"已经把{item_name}送到{target}，请拿走"})
+            tasks.append({"action": "wait_confirm", "handover_phase": "dropoff", "item_name": item_name})
+
+        if return_charge:
+            tasks.append({"action": "dock"})
+
+        if tasks:
+            return tasks
+
+        nav_target = self._extract_navigation_target(text)
+        if nav_target:
+            nav_tasks: List[Dict[str, Any]] = [{"action": "goto", "target": nav_target}]
+            if return_charge:
+                nav_tasks.append({"action": "dock"})
+            return nav_tasks
+
+        if return_charge:
+            return [{"action": "dock"}]
+        return None
+
+    def _build_fallback_submit_mission_tool_call(
+        self,
+        user_input: str,
+        reply_text: str,
+    ) -> Optional[Dict[str, Any]]:
+        if self._current_intent_type() != "mission":
+            return None
+        if self._looks_like_clarification_reply(reply_text):
+            return None
+
+        tasks = self._build_fallback_mission_tasks(user_input)
+        if not tasks:
+            return None
+
+        self._debug_print("LLM未输出 submit_mission，启用规则兜底任务流")
+        return {
+            "id": f"fallback_submit_mission_{uuid.uuid4().hex[:8]}",
+            "type": "function",
+            "function": {
+                "name": "submit_mission",
+                "arguments": json.dumps({"tasks": tasks}, ensure_ascii=False),
+            },
+        }
+
+    def _execute_submit_mission_fallback(
+        self,
+        user_input: str,
+        reason: str = "",
+    ) -> Generator[BrainResponse, None, bool]:
+        fallback_tool_call = self._build_fallback_submit_mission_tool_call(user_input, "")
+        if not fallback_tool_call:
+            return False
+
+        try:
+            extracted_calls = self._extract_steps_from_tool_call(fallback_tool_call)
+        except Exception as exc:
+            self._debug_print(f"fallback submit_mission parse failed: {exc}")
+            return False
+
+        if not extracted_calls:
+            return False
+
+        step = extracted_calls[0]
+        function_name = step.get("name")
+        if function_name != "submit_mission":
+            return False
+
+        arguments = self._normalize_step_arguments(function_name, step.get("arguments", {}))
+        skill = self.registry.get(function_name)
+        if not skill:
+            yield BrainResponse(type="error", content="技能 submit_mission 不存在")
+            return True
+
+        if reason:
+            self._debug_print(f"LLM异常后启用 submit_mission 兜底: {reason}")
+
+        fallback_steps = [{"skill": function_name, "params": arguments}]
+        yield BrainResponse(type="plan", content="", metadata={"steps": fallback_steps})
+        yield BrainResponse(
+            type="action",
+            content="执行技能: submit_mission",
+            metadata={
+                "skill": function_name,
+                "params": arguments,
+                "step_num": 1,
+            },
+        )
+
+        try:
+            result = skill.run(arguments, self.session_context)
+        except Exception as exc:
+            yield BrainResponse(type="error", content=f"执行异常: {str(exc)}")
+            return True
+
+        if result is None:
+            yield BrainResponse(type="error", content="技能 submit_mission 返回 None")
+            return True
+
+        result_content = result.get("detail", "")
+        success = result.get("ok", False)
+        result_data = result.get("data")
+        yield BrainResponse(
+            type="result",
+            content=result_content,
+            metadata={
+                "success": success,
+                "skill": function_name,
+                "data": result_data,
+            },
+        )
+
+        if success:
+            self._set_current_intent_type("mission")
+            self._update_context(function_name, result)
+            pending = True
+            if isinstance(result_data, dict):
+                pending = bool(result_data.get("pending", True))
+            if pending:
+                yield BrainResponse(type="text", content="任务已提交，正在执行中，请等待导航/回调事件。")
+            else:
+                yield BrainResponse(type="text", content="本轮操作已执行完成。")
+
+            self.session_context["conversation_history"].append({
+                "input": user_input,
+                "summary": "执行了 submit_mission",
+            })
+            if len(self.session_context["conversation_history"]) > 3:
+                self.session_context["conversation_history"] = self.session_context["conversation_history"][-3:]
+            self._learn_from_interaction(user_input, fallback_steps)
+        else:
+            yield BrainResponse(
+                type="error",
+                content="本轮任务执行未成功，请查看上面的错误信息。",
+            )
+
+        return True
+
     def think(self, user_input: str) -> Generator[BrainResponse, None, None]:
         """Use the main LLM loop directly and keep the generator response contract intact."""
         self._cancel_event.clear()
@@ -455,8 +873,24 @@ class LLMBrain:
             return
 
         try:
+            user_input = self._merge_pending_delivery_input(user_input)
+            delivery_clarification = self._needs_delivery_clarification(user_input)
+            if delivery_clarification:
+                question = self._refine_clarification_question(
+                    user_input,
+                    str(delivery_clarification.get("question") or "").strip(),
+                )
+                pending_delivery = self._build_pending_delivery_clarification(user_input, question)
+                if pending_delivery:
+                    self.session_context["pending_delivery_clarification"] = pending_delivery
+                self.session_context["last_input"] = user_input
+                self._set_current_intent_type("mission")
+                yield BrainResponse(type="text", content=question)
+                return
+
             self.session_context["last_input"] = user_input
-            self._set_current_intent_type(None)
+            inferred_intent = self._infer_intent_type(user_input)
+            self._set_current_intent_type(inferred_intent or None)
 
             messages = [
                 LLMMessage(role="system", content=self._get_system_prompt()),
@@ -477,11 +911,11 @@ class LLMBrain:
             messages.append(LLMMessage(role="user", content=user_input))
 
             if context_info:
-                print("[DEBUG] 使用状态上下文")
+                self._debug_print("使用状态上下文")
             if compound_hint:
-                print("[DEBUG] 检测到复合指令，已添加提示")
+                self._debug_print("检测到复合指令，已添加提示")
             if planning_hint:
-                print("[DEBUG] 使用规划优先模式")
+                self._debug_print("使用规划优先模式")
 
             available_tools = self._get_available_tools(user_input)
             allowed_tool_names = {
@@ -519,6 +953,15 @@ class LLMBrain:
                     tool_choice=tool_choice,
                 )
 
+                if not llm_response.tool_calls:
+                    fallback_tool_call = self._build_fallback_submit_mission_tool_call(
+                        user_input,
+                        llm_response.content,
+                    )
+                    if fallback_tool_call:
+                        llm_response.tool_calls = [fallback_tool_call]
+                        llm_response.content = ""
+
                 if llm_response.tool_calls:
                     round_steps = []
                     for tool_call in llm_response.tool_calls:
@@ -550,7 +993,7 @@ class LLMBrain:
                         if round_steps and not status_steps:
                             print(f"[WARN] 状态查询意图下收到非状态工具: {[s.get('skill') for s in round_steps]}")
                         round_steps = status_steps[:1]
-                        print(f"[DEBUG] 状态查询意图: '{user_input}' - 保留步骤: {[s['skill'] for s in round_steps]}")
+                        self._debug_print(f"状态查询意图: '{user_input}' - 保留步骤: {[s['skill'] for s in round_steps]}")
 
                     round_steps = self._sort_steps(round_steps)
                     round_steps = self._augment_steps_from_intent(user_input, all_steps, round_steps)
@@ -583,7 +1026,7 @@ class LLMBrain:
                         yield BrainResponse(type="plan", content="", metadata={"steps": all_steps.copy()})
 
                         if not is_valid:
-                            print(f"[PLAN VALIDATOR] 检测到规划问题: {issues}")
+                            self._debug_print(f"PLAN VALIDATOR 检测到规划问题: {issues}")
                             improvement_hint = self.plan_validator.get_improvement_hint(issues)
                             yield BrainResponse(type="debug", content=improvement_hint)
                             messages.append(LLMMessage(role="user", content=improvement_hint))
@@ -596,7 +1039,7 @@ class LLMBrain:
                         is_valid, issues = self.plan_validator.validate_plan(user_input, all_steps)
                         yield BrainResponse(type="plan", content="", metadata={"steps": all_steps.copy()})
                         if not is_valid:
-                            print(f"[PLAN VALIDATOR] 检测到规划问题: {issues}")
+                            self._debug_print(f"PLAN VALIDATOR 检测到规划问题: {issues}")
                             improvement_hint = self.plan_validator.get_improvement_hint(issues)
                             yield BrainResponse(type="debug", content=improvement_hint)
                             messages.append(LLMMessage(role="user", content=improvement_hint))
@@ -727,7 +1170,17 @@ class LLMBrain:
                 else:
                     content = str(llm_response.content or "").strip()
                     if content:
-                        self._set_current_intent_type("chat")
+                        pending_delivery = None
+                        if self._looks_like_clarification_reply(content):
+                            pending_delivery = self._build_pending_delivery_clarification(user_input, content)
+
+                        if pending_delivery:
+                            self.session_context["pending_delivery_clarification"] = pending_delivery
+                            self._set_current_intent_type("mission")
+                        else:
+                            self.session_context.pop("pending_delivery_clarification", None)
+                            self._set_current_intent_type("chat")
+
                         final_text = content
                         direct_text_emitted = True
                         yield BrainResponse(type="text", content=content)
@@ -740,6 +1193,8 @@ class LLMBrain:
 
             if direct_text_emitted:
                 pass
+            elif final_text and not self._is_polluted_text(final_text):
+                yield BrainResponse(type="text", content=final_text)
             elif self.session_context.get("planning_only") and executed_any_step and planning_complete:
                 yield BrainResponse(type="text", content="本轮操作已执行完成。")
             elif self.session_context.get("planning_only") and not planning_complete:
@@ -757,8 +1212,6 @@ class LLMBrain:
                     yield BrainResponse(type="text", content="任务已提交，正在执行中，请等待导航/回调事件。")
                 else:
                     yield BrainResponse(type="text", content="本轮操作已执行完成。")
-            elif final_text and not self._is_polluted_text(final_text):
-                yield BrainResponse(type="text", content=final_text)
             elif executed_any_step and not had_failures:
                 yield BrainResponse(type="text", content="本轮操作已执行完成。")
             elif executed_any_step and had_failures and not terminal_error_emitted:
@@ -785,7 +1238,9 @@ class LLMBrain:
             self._learn_from_interaction(user_input, all_steps)
 
         except Exception as e:
-            yield BrainResponse(type="error", content=f"LLM处理失败: {str(e)}")
+            handled = yield from self._execute_submit_mission_fallback(user_input, str(e))
+            if not handled:
+                yield BrainResponse(type="error", content=f"LLM处理失败: {str(e)}")
             import traceback
             traceback.print_exc()
 
@@ -1483,14 +1938,14 @@ class LLMBrain:
         if skill_name == "nav_start" and result.get("ok"):
             map_id = data.get("map_id") or data.get("id")
             map_name = data.get("map_name") or data.get("name")
-            print(f"[DEBUG] nav_start 结果: map_id={map_id}, map_name={map_name}")
+            self._debug_print(f"nav_start 结果: map_id={map_id}, map_name={map_name}")
             if map_id:
                 self.session_context["current_map"] = {
                     "id": map_id,
                     "name": map_name or str(map_id)
                 }
                 self.session_context["current_location"] = map_name or str(map_id)
-                print(f"[DEBUG] 上下文已更新: current_map={self.session_context['current_map']}")
+                self._debug_print(f"上下文已更新: current_map={self.session_context['current_map']}")
         
         # nav_goto_location 成功时，保存当前位置
         if skill_name == "nav_goto_location" and result.get("ok"):
@@ -1540,6 +1995,13 @@ class LLMBrain:
     def cancel(self):
         """取消当前任务"""
         self._cancel_event.set()
+        try:
+            submit_mission_skill = self.registry.get("submit_mission") if hasattr(self, "registry") else None
+            cancel_active_mission = getattr(submit_mission_skill, "cancel_active_mission", None)
+            if callable(cancel_active_mission):
+                cancel_active_mission("cancelled by user")
+        except Exception as exc:
+            self._debug_print(f"cancel mission fallback failed: {exc}")
     
     def get_current_plan(self) -> Optional[TaskPlan]:
         """获取当前任务计划"""

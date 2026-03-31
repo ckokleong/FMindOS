@@ -588,32 +588,24 @@ class FishBotAdapter(RobotAdapter):
             if waypoint_id is not None and not (self._is_arrival_event(event_name, payload) or event_code == 4):
                 self._callback_state["target_waypoint_id"] = waypoint_id
                 self._callback_state["target_updated_at"] = timestamp
-                self._callback_state["nav_running"] = True
 
             if waypoint_name and not (self._is_arrival_event(event_name, payload) or event_code == 4):
                 self._callback_state["target_waypoint_name"] = waypoint_name
-
-            if (current_pose or target_pose) and not (
-                self._is_arrival_event(event_name, payload) or event_code == 4
-                or self._is_dock_complete_event(event_name, payload) or event_code == 4001
-                or self._is_nav_stop_event(event_name)
-            ):
-                self._callback_state["nav_running"] = True
 
             if self._is_arrival_event(event_name, payload) or event_code == 4:
                 if waypoint_id is None:
                     waypoint_id = self._callback_state.get("target_waypoint_id")
                 self._callback_state["arrived_waypoint_id"] = waypoint_id
                 self._callback_state["arrived_at"] = timestamp
-                self._callback_state["nav_running"] = False
+                # 到达路点不改变 nav_running：导航服务（地图）仍然开启
 
             if self._is_dock_complete_event(event_name, payload) or event_code == 4001:
                 self._callback_state["dock_complete_at"] = timestamp
-                self._callback_state["nav_running"] = False
+                # nav_running 不在此处修改，以 API 查询结果为准
                 self._callback_state["charging"] = True
 
             if self._is_nav_stop_event(event_name):
-                self._callback_state["nav_running"] = False
+                self._callback_state["nav_running"] = False  # nav_stop 明确关闭导航服务
 
             self._callback_condition.notify_all()
         self._invalidate_status_cache()
@@ -805,18 +797,10 @@ class FishBotAdapter(RobotAdapter):
             success = result.get("code", -1) == 200
             if success:
                 self._current_map_id = map_id
-                self._update_callback_state(
-                    current_map_id=map_id,
-                    nav_running=True,
-                    nav_started_at=None,
-                    target_waypoint_id=None,
-                    target_waypoint_name=None,
-                    target_pose=None,
-                    target_updated_at=None,
-                    arrived_waypoint_id=None,
-                    arrived_at=None,
-                    dock_complete_at=None,
-                )
+                # 重置 nav_started_at，让等待逻辑能感知到这是一次新的启动
+                with self._callback_condition:
+                    self._callback_state["nav_started_at"] = None
+                    self._callback_state["nav_running"] = False
             return success
         except Exception as e:
             print(f"启动导航失败: {e}")
@@ -841,29 +825,33 @@ class FishBotAdapter(RobotAdapter):
             return False
     
     def goto_waypoint(self, waypoint_id: int) -> bool:
-        """导航到路点"""
-        try:
-            result = self._request(
-                "POST",
-                "/api/nav/nav/goto_waypoint",
-                data={"waypoint_id": waypoint_id}
-            )
-            success = result.get("code", -1) == 200
-            if success:
-                self._update_callback_state(
-                    nav_running=True,
-                    target_waypoint_id=waypoint_id,
-                    target_waypoint_name=None,
-                    target_pose=None,
-                    target_updated_at=time.time(),
-                    arrived_waypoint_id=None,
-                    arrived_at=None,
-                    dock_complete_at=None,
+        """导航到路点，失败时最多重试 3 次（间隔 1 秒）"""
+        for attempt in range(3):
+            try:
+                result = self._request(
+                    "POST",
+                    "/api/nav/nav/goto_waypoint",
+                    data={"waypoint_id": waypoint_id}
                 )
-            return success
-        except Exception as e:
-            print(f"导航到路点失败: {e}")
-            return False
+                success = result.get("code", -1) == 200
+                if success:
+                    self._update_callback_state(
+                        nav_running=True,
+                        target_waypoint_id=waypoint_id,
+                        target_waypoint_name=None,
+                        target_pose=None,
+                        target_updated_at=time.time(),
+                        arrived_waypoint_id=None,
+                        arrived_at=None,
+                        dock_complete_at=None,
+                    )
+                    return True
+                print(f"[Adapter] goto_waypoint 失败 (attempt {attempt+1}/3): code={result.get('code')}", flush=True)
+            except Exception as e:
+                print(f"[Adapter] goto_waypoint 异常 (attempt {attempt+1}/3): {e}", flush=True)
+            if attempt < 2:
+                time.sleep(1.0)
+        return False
     
     def goto_point(self, x: float, y: float, yaw: float = 0.0) -> bool:
         """导航到坐标点"""
@@ -996,8 +984,7 @@ class FishBotAdapter(RobotAdapter):
 
         callback_state = self.get_callback_state()
         if self._has_live_callback_state():
-            if callback_state.get("nav_running") is not None and self._should_prefer_callback_nav_state(callback_state):
-                status.nav_running = bool(callback_state.get("nav_running"))
+            # nav_running 不从回调覆盖，以 API 查询结果为准
             if isinstance(callback_state.get("current_pose"), dict):
                 status.current_pose = callback_state.get("current_pose")
             if callback_state.get("charging") is not None:
@@ -1105,42 +1092,82 @@ class FishBotAdapter(RobotAdapter):
         return self.motion_stand()
 
     def _ensure_navigation_started_for_mission(self, map_id: Optional[int]) -> bool:
-        """Best-effort: ensure nav service is started on a map before goto_waypoint."""
+        """确保导航服务已就绪后再发路点。
+        - 用 API nav_state 判断 running 状态
+        - running=True → 直接可用
+        - running=False → 调 start_navigation，然后等 navigation_started (1002) 回调
+        """
+        # 1. 查 API 获取真实状态
         nav_running = False
         nav_map_id = None
         try:
             nav_status = self.get_navigation_status()
+            if isinstance(nav_status, dict):
+                nav_running = bool(nav_status.get("nav_running"))
+                nav_map_id = nav_status.get("map_id") or nav_status.get("current_map_id")
+                if nav_map_id is not None:
+                    try:
+                        nav_map_id = int(nav_map_id)
+                    except (TypeError, ValueError):
+                        nav_map_id = None
         except Exception:
-            nav_status = {}
-        if isinstance(nav_status, dict):
-            nav_running = bool(nav_status.get("nav_running"))
-            nav_map_id = nav_status.get("current_map_id") or nav_status.get("map_id")
+            pass
 
-        if nav_map_id is not None:
-            try:
-                nav_map_id = int(nav_map_id)
-            except (TypeError, ValueError):
-                pass
-
+        # 2. API running=True 且地图匹配 → 检查是否真正就绪（1002 已到）
         if nav_running and (map_id is None or nav_map_id == map_id):
-            return True
+            with self._callback_condition:
+                nav_started_at = self._callback_state.get("nav_started_at")
+            if nav_started_at:
+                return True  # 1002 确认过，真正就绪
+            # API 超前返回 True，等待 1002 回调确认
+            print("[Adapter] API running=True 但 1002 未到，等待 navigation_started 回调...", flush=True)
+            ok = self._wait_for_nav_started(timeout=10)
+            if not ok:
+                print("[Adapter] 等待 navigation_started 回调超时", flush=True)
+            return ok
 
-        if map_id is None:
-            map_info = self.resolve_current_map()
-            if map_info:
-                map_id = map_info.id
+        # 3. 未运行 → 启动导航，然后等 1002 回调确认就绪
+        if not nav_running:
+            if map_id is None:
+                map_info = self.resolve_current_map()
+                if map_info:
+                    map_id = map_info.id
+            if map_id is None:
+                print("[Adapter] 无法确定地图 ID，拒绝启动导航", flush=True)
+                return False
+            print(f"[Adapter] 导航未运行，启动地图 {map_id}...", flush=True)
+            if not self.start_navigation(map_id):
+                print("[Adapter] start_navigation 失败", flush=True)
+                return False
+            ok = self._wait_for_nav_started(timeout=10)
+            if not ok:
+                print("[Adapter] 等待 navigation_started 回调超时", flush=True)
+            return ok
 
-        if map_id is None:
-            return False
+        # 4. 运行中但地图不匹配
+        print(
+            f"[Adapter] 导航服务地图不匹配：当前地图={nav_map_id}，目标地图={map_id}，拒绝执行",
+            flush=True,
+        )
+        return False
 
-        try:
-            map_id = int(map_id)
-        except (TypeError, ValueError):
-            return False
-
-        if not self.start_navigation(map_id):
-            return False
-        return True
+    def _wait_for_nav_started(self, timeout: int = 10) -> bool:
+        """等待 navigation_started (1002) 回调，有事件流用回调，否则降级轮询 API。"""
+        if self._event_stream_enabled():
+            return self._wait_for_callback(
+                lambda state: bool(state.get("nav_started_at")),
+                timeout=timeout,
+            )
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(0.5)
+            try:
+                s = self.get_navigation_status()
+            except Exception:
+                s = {}
+            if isinstance(s, dict) and s.get("nav_running"):
+                return True
+        return False
 
     def navigate_to(self, target: str) -> bool:
         """MissionExecutor 兼容：按目标名称导航到路点。"""
@@ -1371,8 +1398,7 @@ class FishBotAdapter(RobotAdapter):
             status["current_map_id"] = callback_state.get("current_map_id")
             status["map_id"] = callback_state.get("current_map_id")
         if self._has_live_callback_state():
-            if callback_state.get("nav_running") is not None and self._should_prefer_callback_nav_state(callback_state):
-                status["nav_running"] = bool(callback_state.get("nav_running"))
+            # nav_running 不从回调覆盖，以 API 查询结果为准
             if isinstance(callback_state.get("current_pose"), dict):
                 status["current_pose"] = callback_state.get("current_pose")
             if isinstance(callback_state.get("target_pose"), dict):
