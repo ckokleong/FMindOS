@@ -94,6 +94,8 @@ class Soul:
             existing.confidence += 1
             if example and example not in existing.examples:
                 existing.examples.append(example)
+                if len(existing.examples) > 10:
+                    existing.examples = existing.examples[-10:]
             if rule:
                 existing.rule = rule
             return

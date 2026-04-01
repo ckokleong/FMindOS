@@ -5,6 +5,7 @@ Terminal interaction channel.
 from __future__ import annotations
 
 import itertools
+import json
 import re
 import sys
 import threading
@@ -419,6 +420,130 @@ class TerminalChannel(InteractionChannel):
             relations.append(relation)
         return relations
 
+    def _batch_ai_enrich_world(self, world_path: Path) -> None:
+        """为 world 中所有描述为空的地点调用 LLM 批量补充语义信息并保存。"""
+        brain = getattr(self.manager, "brain", None)
+        llm = getattr(brain, "llm", None)
+        if brain is None:
+            self.ui.print_error("Brain 未初始化，无法调用 AI。")
+            return
+        if llm is None:
+            self.ui.print_error("LLM 未配置（brain.llm 为 None），无法调用 AI。请检查 fishmindos.config.json 中的 llm 配置。")
+            return
+
+        from fishmindos.world.store import WorldStore
+        store = WorldStore(world_path)
+        world = store.load()
+        def _needs_enrich(loc) -> bool:
+            return (not loc.description
+                    or not getattr(loc, "aliases", None)
+                    or not getattr(loc, "task_hints", None))
+
+        targets = [loc for loc in world.locations if _needs_enrich(loc)]
+        if not targets:
+            self.ui.print_info("所有地点已有描述、别名和用途，无需 AI 补充。")
+            return
+        print(f"   共 {len(targets)} 个地点需要 AI 补充，逐个处理中...")
+        updated = 0
+        for loc in targets:
+            spinner = Spinner(f"   · {loc.name}")
+            spinner.start()
+            suggestion = self._suggest_location_semantics_with_llm(loc.name, world.name)
+            spinner.stop()
+            if suggestion:
+                if suggestion.get("description") and not loc.description:
+                    loc.description = suggestion["description"]
+                if suggestion.get("category") and not loc.category:
+                    loc.category = suggestion["category"]
+                # 别名和用途：AI 结果始终追加（去重），不强制留空才更新
+                ai_aliases = suggestion.get("aliases") or []
+                existing_aliases = list(getattr(loc, "aliases", None) or [])
+                merged_aliases = existing_aliases + [a for a in ai_aliases if a not in existing_aliases]
+                if merged_aliases:
+                    loc.aliases = merged_aliases
+                ai_hints = suggestion.get("task_hints") or []
+                existing_hints = list(getattr(loc, "task_hints", None) or [])
+                merged_hints = existing_hints + [h for h in ai_hints if h not in existing_hints]
+                if merged_hints:
+                    loc.task_hints = merged_hints
+                alias_str = "、".join(loc.aliases[:3]) if loc.aliases else ""
+                print(f"   · {loc.name}: {loc.description}" + (f"  别名: {alias_str}" if alias_str else ""))
+                updated += 1
+            else:
+                print(f"   · {loc.name}: (跳过)")
+        store.save(world)
+        self.ui.print_info(f"AI 补充完成，已更新 {updated}/{len(targets)} 个地点。")
+
+    def _suggest_location_semantics_with_llm(self, location_name: str, map_name: str) -> Optional[Dict]:
+        """调用 LLM 为地点名称给出语义建议，返回 dict 或 None。"""
+        brain = getattr(self.manager, "brain", None)
+        llm = getattr(brain, "llm", None)
+        if llm is None:
+            return None
+        try:
+            from fishmindos.brain.llm_providers import LLMMessage
+        except Exception:
+            return None
+
+        system_msg = (
+            "你是一个熟悉室内服务机器人场景的专家。"
+            "根据地点名称和地图名，为该地点生成语义标注。"
+            "只输出严格的 JSON 对象，不要任何解释和代码块标记。"
+            "JSON 字段："
+            "description（一句话描述，20字内）、"
+            "category（英文单词，如 office/reception/toilet/kitchen/corridor/lab/meeting_room/warehouse/general/waypoint）、"
+            "aliases（尽量多的中文别名列表，至少3个，涵盖口语/正式/缩写等说法）、"
+            "task_hints（机器人在此处常见任务列表，至少3条，具体描述行为而非泛泛）。"
+        )
+        user_msg = f"地图名: {map_name}\n地点名: {location_name}"
+
+        result_holder: list = [None]
+        error_holder: list = [None]
+
+        def _call():
+            try:
+                resp = llm.chat(
+                    messages=[
+                        LLMMessage(role="system", content=system_msg),
+                        LLMMessage(role="user", content=user_msg),
+                    ],
+                    tools=None,
+                    temperature=0.3,
+                    max_tokens=600,   # 300 思考 + ~300 JSON 输出，足够
+                    extra_body={"thinking": {"type": "enabled", "budget_tokens": 300}},
+                )
+                text = (resp.content or "").strip()
+                if not text:
+                    error_holder[0] = "LLM 返回了空内容"
+                    return
+                # 去掉 markdown 代码围栏
+                text = re.sub(r"^```[a-z]*\n?", "", text)
+                text = re.sub(r"\n?```$", "", text).strip()
+                if not text:
+                    error_holder[0] = "LLM 返回空代码块"
+                    return
+                # 尝试从回复中提取第一个 JSON 对象
+                m = re.search(r"\{.*\}", text, re.DOTALL)
+                if m:
+                    text = m.group(0)
+                else:
+                    error_holder[0] = f"LLM 未返回 JSON（实际内容: {text[:80]!r}）"
+                    return
+                result_holder[0] = json.loads(text)
+            except Exception as e:
+                error_holder[0] = str(e)
+
+        import threading as _th
+        t = _th.Thread(target=_call, daemon=True)
+        t.start()
+        t.join(timeout=40)   # 足够 ZhipuProvider 单次 30s HTTP 请求
+        if error_holder[0]:
+            print(f"\n   [AI错误] {error_holder[0]}", flush=True)
+        elif result_holder[0] is None:
+            print("\n   [AI超时] LLM 未在 40s 内返回", flush=True)
+        data = result_holder[0]
+        return data if isinstance(data, dict) else None
+
     def _edit_world_locations_interactive(self, world_path: Path, config) -> bool:
         store = WorldStore(world_path)
         world = store.load()
@@ -456,6 +581,26 @@ class TerminalChannel(InteractionChannel):
                 continue
 
             item = world.locations[index - 1]
+            # 提供 AI 建议
+            ai_suggestion = self._suggest_location_semantics_with_llm(item.name, world.name)
+            if ai_suggestion:
+                print(f"   [AI] 建议描述: {ai_suggestion.get('description','')}")
+                print(f"   [AI] 建议类别: {ai_suggestion.get('category','')}")
+                if ai_suggestion.get('aliases'):
+                    print(f"   [AI] 建议别名: {', '.join(ai_suggestion['aliases'])}")
+                if ai_suggestion.get('task_hints'):
+                    print(f"   [AI] 建议用途: {', '.join(ai_suggestion['task_hints'])}")
+                apply = input(":: 是否应用 AI 建议作为默认值？(Y/n): ").strip().lower()
+                if apply not in {"n", "no", "否"}:
+                    if ai_suggestion.get("description") and not item.description:
+                        item.description = ai_suggestion["description"]
+                    if ai_suggestion.get("category") and not item.category:
+                        item.category = ai_suggestion["category"]
+                    if ai_suggestion.get("aliases") and not item.aliases:
+                        item.aliases = ai_suggestion["aliases"]
+                    if ai_suggestion.get("task_hints") and not item.task_hints:
+                        item.task_hints = ai_suggestion["task_hints"]
+
             description = input(f":: 为 {item.name} 设置描述（当前: {item.description or '无'}）: ").strip()
             if description == "-":
                 item.description = ""
@@ -596,7 +741,11 @@ class TerminalChannel(InteractionChannel):
         self.ui.print_info(f"已将 {selected_map.name} 设为默认 world，后续将优先使用 {world.name}。")
         self.ui.print_info(f"world 文件: {relative_world_path}")
 
-        edit_now = input(":: 是否现在补充地点语义信息（描述/别名/类别/用途/关系）？(y/N): ").strip().lower()
+        ai_now = input(":: 是否让 AI 自动为所有地点补充语义信息？(Y/n): ").strip().lower()
+        if ai_now not in {"n", "no", "否"}:
+            self._batch_ai_enrich_world(world_path)
+
+        edit_now = input(":: 是否继续手动编辑地点语义信息？(y/N): ").strip().lower()
         if edit_now in {"y", "yes", "是"}:
             return self._edit_world_locations_interactive(world_path, config)
         return True

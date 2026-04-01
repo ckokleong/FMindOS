@@ -449,6 +449,12 @@ class InteractionManager:
                             self._async_session_id = session_id
                             final_response = "任务已提交，正在执行中，请等待导航/回调事件。"
 
+                elif response_type == "preview":
+                    # 任务开始前的预告，立即显示，不影响最终回复
+                    preview_text = str(resp_dict.get("content", "")).strip()
+                    if preview_text:
+                        self.emit("message", session_id=session_id, text=preview_text)
+
                 elif response_type == "text":
                     raw_text = resp_dict.get("content", "")
                     cleaned_text = sanitize_output(raw_text)
@@ -649,6 +655,12 @@ class InteractionManager:
                             session.session_context["async_origin_client_type"] = origin_client
                             self._async_session_id = session_id
                             final_response = "任务已提交，正在执行中，请等待导航/回调事件。"
+
+                elif response_type == "preview":
+                    # 任务开始前的预告，立即显示，不影响最终回复
+                    preview_text = str(resp_dict.get("content", "")).strip()
+                    if preview_text:
+                        self.emit("message", session_id=session_id, text=preview_text, source_client=origin_client)
 
                 elif response_type == "text":
                     raw_text = resp_dict.get("content", "")

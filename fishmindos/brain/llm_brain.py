@@ -121,8 +121,8 @@ class LLMBrain:
         is_delivery_intent = bool((has_fetch_verb or has_deliver_verb) and (has_object_by_pattern or has_object_keyword))
 
         has_source = bool(
-            re.search(r"(去|到|从|在)[^，。,.!?？！]{1,14}(拿|取|买|带|领)", normalized)
-            or re.search(r"(从)[^，。,.!?？！]{1,14}(拿|取|买|带|领)", normalized)
+            re.search(r"(去|到|从|在)[^，。,.!?？！]{1,14}(拿|取|买|带|领|要)", normalized)
+            or re.search(r"(从)[^，。,.!?？！]{1,14}(拿|取|买|带|领|要)", normalized)
         )
 
         has_target = bool(
@@ -131,6 +131,8 @@ class LLMBrain:
                 k in normalized
                 for k in ["给我", "送我", "拿给我", "带给我", "送回来", "拿回来", "带回来", "送过来", "拿过来", "带过来"]
             )
+            # 隐式目的地："我在X" / "我现在在X" → 送到用户所在地
+            or bool(re.search(r"我[^，。,.!?？！]{0,4}在[^，。,.!?？！]{1,12}", normalized))
         )
 
         return {
@@ -183,7 +185,7 @@ class LLMBrain:
             item = item_match.group(2)
 
         source = None
-        source_match = re.search(r"(?:去|到|从|在)([^，。,.!?？！]{1,14})(?:拿|取|带|买|领)", normalized)
+        source_match = re.search(r"(?:去|到|从|在)([^，。,.!?？！]{1,14})(?:拿|取|带|买|领|要)", normalized)
         if source_match:
             source = source_match.group(1)
 
@@ -576,6 +578,7 @@ class LLMBrain:
             "去", "到", "前往", "导航", "返回", "回来", "回去", "回充", "充电",
             "开灯", "关灯", "亮灯", "播报", "播放", "说", "拿", "取", "送",
             "买", "带", "领", "交给", "停止导航", "关闭导航", "取消导航",
+            "站起来", "站立", "站好", "趴下", "坐下",
         ]
         return any(keyword in normalized for keyword in keywords)
 
@@ -701,6 +704,12 @@ class LLMBrain:
 
         if any(keyword in normalized for keyword in ["停止导航", "关闭导航", "取消导航"]):
             return [{"action": "stop_nav"}]
+
+        if any(keyword in normalized for keyword in ["站起来", "站立", "站好"]):
+            return [{"action": "stand"}]
+
+        if any(keyword in normalized for keyword in ["趴下", "卧倒", "坐下"]):
+            return [{"action": "lie_down"}]
 
         route = self._extract_delivery_route(text)
         source = str(route.get("source") or "").strip()
@@ -1035,6 +1044,18 @@ class LLMBrain:
                         plan_shown = True
                         shown_plan_length = len(all_steps)
                         self.session_context["last_plan"] = all_steps.copy()
+
+                        preview = self._build_plan_preview(user_input, all_steps)
+                        if preview:
+                            # 注入到 submit_mission tasks 最前面，让机器人先播报再出发
+                            for step in all_steps:
+                                if step.get("skill") == "submit_mission":
+                                    tasks = step.get("params", {}).get("tasks")
+                                    if isinstance(tasks, list):
+                                        tasks.insert(0, {"action": "speak", "text": preview, "async": True})
+                                    break
+                            # 用独立 type 立即显示，不被后续"任务已提交"覆盖
+                            yield BrainResponse(type="preview", content=preview)
                     elif self.session_context.get("planning_only") and round_steps and len(all_steps) > shown_plan_length:
                         is_valid, issues = self.plan_validator.validate_plan(user_input, all_steps)
                         yield BrainResponse(type="plan", content="", metadata={"steps": all_steps.copy()})
@@ -1377,7 +1398,82 @@ class LLMBrain:
                         normalized["map_name"] = current_map.get("name")
 
         return normalized
-    
+
+    def _build_plan_preview(self, user_input: str, all_steps: list) -> str:
+        """用 LLM 生成一句简短的执行预告，符合角色性格；超时则使用规则兜底。"""
+        tasks = []
+        for step in all_steps:
+            if step.get("skill") == "submit_mission":
+                raw = step.get("params", {})
+                if isinstance(raw, dict):
+                    tasks = raw.get("tasks", [])
+                break
+
+        if not tasks:
+            return ""
+
+        tasks_json = json.dumps(tasks, ensure_ascii=False)
+        identity = ""
+        try:
+            identity = get_config().app.identity or ""
+        except Exception:
+            pass
+
+        system_msg = (
+            f"你是{identity or '小幻'}，一个友好活泼的机器人助手。"
+            "根据用户的请求和即将执行的任务步骤，用第一人称说一句简短（20字以内）的执行预告。"
+            "语气要自然、积极，体现角色性格，不要列出每个步骤，说大概要做什么即可。"
+            "只输出那一句话，不要加任何前缀或解释。"
+        )
+        user_msg = f"用户请求：{user_input}\n任务步骤：{tasks_json}"
+
+        import threading as _threading
+        result_holder: list = [None]
+        error_holder: list = [None]
+
+        def _llm_call() -> None:
+            try:
+                resp = self.llm.chat(
+                    messages=[
+                        LLMMessage(role="system", content=system_msg),
+                        LLMMessage(role="user", content=user_msg),
+                    ],
+                    tools=None,
+                    temperature=0.7,
+                    max_tokens=60,
+                )
+                result_holder[0] = (resp.content or "").strip()
+            except Exception as exc:
+                error_holder[0] = exc
+
+        t = _threading.Thread(target=_llm_call, daemon=True)
+        t.start()
+        t.join(timeout=10)
+
+        if result_holder[0]:
+            return result_holder[0]
+        if error_holder[0] is not None:
+            print(f"[WARN] preview 生成失败: {error_holder[0]}")
+        # LLM 超时或返回空 → 规则兜底
+        return self._build_plan_preview_fallback(tasks, identity)
+
+    def _build_plan_preview_fallback(self, tasks: list, identity: str) -> str:
+        """规则兜底：从任务列表生成简短预告语。"""
+        name = identity or "我"
+        gotos = [t.get("target", "") for t in tasks if isinstance(t, dict) and t.get("action") == "goto" and t.get("target")]
+        has_dock = any(isinstance(t, dict) and t.get("action") == "dock" for t in tasks)
+        speak_texts = [t.get("text", "") for t in tasks if isinstance(t, dict) and t.get("action") == "speak" and t.get("text")]
+
+        if len(gotos) >= 2:
+            return f"好的，{name}先去{gotos[0]}，再去{gotos[1]}{'，然后回来充电' if has_dock else ''}！"
+        if len(gotos) == 1:
+            return f"好的，{name}马上去{gotos[0]}{'，然后回来充电' if has_dock else ''}！"
+        if has_dock:
+            return f"好的，{name}马上回去充电！"
+        if speak_texts:
+            return f"好的，{name}马上去执行！"
+        return ""
+
     def _get_world_prompt_info(self) -> str:
         """Return current world information for LLM grounding."""
         resolver = self.session_context.get("world") or self.session_context.get("world_model")
@@ -1804,13 +1900,15 @@ class LLMBrain:
 
         runtime_rules = (
             "# Runtime Rules\n"
-            "【追问规则】：如果用户指令缺少关键地点或信息，导致无法执行，请直接回复自然语言追问，绝对不要调用任何工具。\n"
+            "【追问规则】：只有当任务缺少关键地点或信息，且用户句子里完全没有提到、world 里也找不到时，才直接回复自然语言追问，绝对不要调用任何工具。用户句子中已经提到的地点、人名、物品、目的地均属于已知信息，不得重复询问。\n"
             "【一站式规划铁律】：只要信息充足，你必须将所有需要的物理动作（移动、亮灯、播报、等待）一次性全部打包进 submit_mission 的 tasks 数组中。禁止自己一步一步拆解工具调用。\n"
             "【携带物上下文规则】：如果当前状态显示“携带: 某物品”，而用户只说“送到某地/带到某地/拿到某地”，默认就是把当前携带的物品送过去。此时应规划送达后的 speak 和 wait_confirm，而不是只做 goto。\n"
             "【停止导航规则】：当用户要求关闭导航、停止导航、取消当前导航时，使用 submit_mission，并在 tasks 中生成 {\"action\": \"stop_nav\"}。这不是状态查询。\n"
+            "【运动指令规则】：'站起来'/'站立'/'站好' 是运动指令，使用 submit_mission，tasks 填 [{\"action\": \"stand\"}]；'趴下'/'坐下' 同理。绝对不是状态查询。\n"
             "【状态查询规则】：纯状态、电量、充电查询时，只允许调用 system_status，然后直接文字回复。\n"
             "【地点查询规则】：当用户询问‘这里有哪些点/有哪些地点/路点列表/当前地图有哪些位置’时，调用 world_list_locations，不要误用 system_status。\n"
-            "【闲聊规则】：身份介绍、解释说明、普通闲聊时，不要调用任何工具。"
+            "【闲聊规则】：身份介绍、解释说明、普通闲聊时，不要调用任何工具。\n"
+            "【speak 代词转换规则】：speak 的 text 是机器人直接对当前地点的人说的话。用户描述中对第三方使用的'他/她'，在 speak 里必须转换成'你/您'。例如：用户说'找文成要他刚做好的咖啡'，对文成说话时应说'你刚做好的咖啡'，不能说'他刚做好的咖啡'。"
         )
 
         sections = [section for section in (base_prompt, runtime_rules) if section]

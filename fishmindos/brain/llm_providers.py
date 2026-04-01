@@ -85,6 +85,7 @@ class ZhipuProvider(LLMProvider):
         temperature: float = 0.7,
         max_tokens: int = 2000,
         tool_choice: Optional[Any] = None,
+        extra_body: Optional[Dict] = None,
     ) -> LLMResponse:
         """调用智谱API"""
         url = f"{self.base_url}/chat/completions"
@@ -101,6 +102,9 @@ class ZhipuProvider(LLMProvider):
             "max_tokens": max_tokens
         }
         
+        if extra_body:
+            payload.update(extra_body)
+
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice if tool_choice is not None else "auto"
@@ -147,8 +151,10 @@ class ZhipuProvider(LLMProvider):
                                 })
                         tool_calls = formatted_tool_calls
                     
+                    # content key exists but may be null; normalise to empty string
+                    content = message.get('content') or ''
                     return LLMResponse(
-                        content=message.get('content', ''),
+                        content=content,
                         tool_calls=tool_calls,
                         usage=result.get('usage'),
                         raw_response=result

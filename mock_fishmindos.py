@@ -591,6 +591,7 @@ def main():
     print("  2. 是否会多余调用 nav_start")
     print("  3. '完成后亮绿灯' 是否生成 system_wait + light_set")
     print("  4. 网络抖动时是否优雅处理")
+    print("  5. 输入 'world' 可设置默认地图并让 AI 自动补充地点语义信息")
     print()
     print("=" * 70)
     print()

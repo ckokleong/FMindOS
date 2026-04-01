@@ -83,6 +83,10 @@ class MissionManager:
             return f"灯光 {color}" if color else "调整灯光"
         if action == "stop_nav":
             return "停止导航"
+        if action == "stand":
+            return "站起来"
+        if action in ("lie_down", "lie"):
+            return "趴下"
         return action or "执行任务"
 
     def _publish_progress(
@@ -438,6 +442,19 @@ class MissionManager:
 
         if action == "speak":
             text = task.get("text")
+            is_async = bool(task.get("async", False))
+            if is_async:
+                # 异步播放：后台线程播音，同时立即执行下一步
+                def _play():
+                    try:
+                        self.adapter.play_audio(text)
+                    except Exception:
+                        pass
+                threading.Thread(target=_play, daemon=True, name="speak-async").start()
+                self._last_speak_text = str(text or "").strip()
+                self._publish_progress("completed", task=task, step_index=step_index, message="播报（异步）")
+                self._execute_next()
+                return
             try:
                 ok = bool(self.adapter.play_audio(text))
             except Exception as exc:
@@ -459,6 +476,25 @@ class MissionManager:
                 self.event_bus.publish("action_failed", {"action": "query", "error": str(exc)})
                 return
             self._publish_progress("completed", task=task, step_index=step_index, message="状态查询已完成")
+            self._execute_next()
+            return
+
+        if action in ("stand", "lie_down", "lie"):
+            method_name = "motion_stand" if action == "stand" else "motion_lie_down"
+            method = getattr(self.adapter, method_name, None)
+            if not callable(method):
+                self.event_bus.publish("action_failed", {"action": action, "error": f"{method_name} not supported by adapter"})
+                return
+            try:
+                ok = bool(method())
+            except Exception as exc:
+                ok = False
+                self.last_error = f"{action} failed: {exc}"
+            if not ok:
+                self.event_bus.publish("action_failed", {"action": action})
+                return
+            label = "站立完成" if action == "stand" else "趴下完成"
+            self._publish_progress("completed", task=task, step_index=step_index, message=label)
             self._execute_next()
             return
 

@@ -44,7 +44,7 @@ import asyncio
 import threading
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from fishmindos.config import get_config
 from fishmindos.interaction.channels.base import InteractionChannel
@@ -105,10 +105,10 @@ class AndroidGateway(InteractionChannel):
         self.manager = manager
         self.host = host
         self.port = port
-        # session_id -> (asyncio.Queue, asyncio.AbstractEventLoop)
-        # Keep only the latest connection per session, but protect against an
-        # older socket removing a newer mapping during reconnect races.
-        self._ws_connections: Dict[str, tuple] = {}
+        # session_id -> [(asyncio.Queue, asyncio.AbstractEventLoop), ...]
+        # Multiple Android devices may subscribe to the same session so they
+        # can stay in sync and render the same task/confirm UI together.
+        self._ws_connections: Dict[str, List[Tuple[asyncio.Queue, asyncio.AbstractEventLoop]]] = {}
         self._lock = threading.Lock()
         self._server_thread: Optional[threading.Thread] = None
         self._server = None
@@ -139,10 +139,13 @@ class AndroidGateway(InteractionChannel):
         event_type = event.get("type")
         with self._lock:
             if session_id is not None:
-                conn = self._ws_connections.get(session_id)
-                targets = [conn] if conn is not None else []
+                targets = list(self._ws_connections.get(session_id, []))
             else:
-                targets = list(self._ws_connections.values())
+                targets = [
+                    conn
+                    for connections in self._ws_connections.values()
+                    for conn in connections
+                ]
 
         self._debug_print(
             f"[AndroidGateway] route event type={event_type} session={session_id} targets={len(targets)}"
@@ -318,7 +321,7 @@ class AndroidGateway(InteractionChannel):
             connection = (queue, loop)
 
             with gateway._lock:
-                gateway._ws_connections[session_id] = connection
+                gateway._ws_connections.setdefault(session_id, []).append(connection)
 
             # Phase 6: push current state immediately so the client can
             # restore its UI after a reconnect.
@@ -354,7 +357,13 @@ class AndroidGateway(InteractionChannel):
                 pass
             finally:
                 with gateway._lock:
-                    if gateway._ws_connections.get(session_id) == connection:
-                        gateway._ws_connections.pop(session_id, None)
+                    connections = gateway._ws_connections.get(session_id)
+                    if connections:
+                        try:
+                            connections.remove(connection)
+                        except ValueError:
+                            pass
+                        if not connections:
+                            gateway._ws_connections.pop(session_id, None)
 
         return app
