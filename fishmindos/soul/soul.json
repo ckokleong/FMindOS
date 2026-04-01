@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "name": "default",
+  "description": "FishMindOS 的长期学习与个性化偏好存储。",
+  "preferences": {
+    "return_behavior": {
+      "key": "return_behavior",
+      "value": "charge",
+      "confidence": 2,
+      "source": "learned",
+      "notes": "用户说“返回/回来/回去”且未明确目标时，优先理解为回充。"
+    }
+  },
+  "rules": {
+    "implicit_return_target": {
+      "name": "implicit_return_target",
+      "rule": "当用户只说返回/回来而没有明确目标时，默认回到回充点。",
+      "confidence": 2,
+      "source": "learned",
+      "examples": [
+        "小幻小幻，帮我去厨房拿吃的，送到路点，再回来充电"
+      ]
+    }
+  },
+  "memories": [
+    {
+      "summary": "学到：用户说“返回/回来”通常表示回充。",
+      "user_input": "小幻小幻，帮我去厨房拿吃的，送到路点，再回来充电",
+      "learned_at": "2026-04-01T11:27:18",
+      "tags": [
+        "return"
+      ]
+    },
+    {
+      "summary": "学到：用户说“返回/回来”通常表示回充。",
+      "user_input": "小幻小幻，帮我去厨房拿吃的，送到路点，再回来充电",
+      "learned_at": "2026-04-01T11:40:36",
+      "tags": [
+        "return"
+      ]
+    }
+  ]
+}

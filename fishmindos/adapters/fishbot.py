@@ -1113,18 +1113,14 @@ class FishBotAdapter(RobotAdapter):
         except Exception:
             pass
 
-        # 2. API running=True 且地图匹配 → 检查是否真正就绪（1002 已到）
+        # 2. API running=True 且地图匹配 → 直接可用，无需等 1002
         if nav_running and (map_id is None or nav_map_id == map_id):
+            # 补写 nav_started_at，让本次进程后续步骤不再重复检查
             with self._callback_condition:
-                nav_started_at = self._callback_state.get("nav_started_at")
-            if nav_started_at:
-                return True  # 1002 确认过，真正就绪
-            # API 超前返回 True，等待 1002 回调确认
-            print("[Adapter] API running=True 但 1002 未到，等待 navigation_started 回调...", flush=True)
-            ok = self._wait_for_nav_started(timeout=10)
-            if not ok:
-                print("[Adapter] 等待 navigation_started 回调超时", flush=True)
-            return ok
+                if not self._callback_state.get("nav_started_at"):
+                    import time as _time
+                    self._callback_state["nav_started_at"] = _time.time()
+            return True
 
         # 3. 未运行 → 启动导航，然后等 1002 回调确认就绪
         if not nav_running:
