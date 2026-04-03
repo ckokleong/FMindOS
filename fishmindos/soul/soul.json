@@ -6,7 +6,7 @@
     "return_behavior": {
       "key": "return_behavior",
       "value": "charge",
-      "confidence": 2,
+      "confidence": 4,
       "source": "learned",
       "notes": "用户说“返回/回来/回去”且未明确目标时，优先理解为回充。"
     }
@@ -15,10 +15,12 @@
     "implicit_return_target": {
       "name": "implicit_return_target",
       "rule": "当用户只说返回/回来而没有明确目标时，默认回到回充点。",
-      "confidence": 2,
+      "confidence": 4,
       "source": "learned",
       "examples": [
-        "小幻小幻，帮我去厨房拿吃的，送到路点，再回来充电"
+        "小幻小幻，帮我去厨房拿吃的，送到路点，再回来充电",
+        "先去厕所，然后回来充电。",
+        "回去充电吧"
       ]
     }
   },
@@ -37,6 +39,62 @@
       "learned_at": "2026-04-01T11:40:36",
       "tags": [
         "return"
+      ]
+    },
+    {
+      "summary": "记录：最近执行过与 卫生间 相关的任务。",
+      "user_input": "去厕所",
+      "learned_at": "2026-04-01T17:21:06",
+      "tags": [
+        "task"
+      ]
+    },
+    {
+      "summary": "学到：用户说“返回/回来”通常表示回充。",
+      "user_input": "先去厕所，然后回来充电。",
+      "learned_at": "2026-04-01T17:33:11",
+      "tags": [
+        "return"
+      ]
+    },
+    {
+      "summary": "记录：最近执行过与 厨房 相关的任务。",
+      "user_input": "我现在在路点招待客人，你可以去帮我去厨房拿两瓶水吗",
+      "learned_at": "2026-04-02T19:52:40",
+      "tags": [
+        "task"
+      ]
+    },
+    {
+      "summary": "记录：最近执行过与 吧 相关的任务。",
+      "user_input": "回去吧",
+      "learned_at": "2026-04-02T19:53:31",
+      "tags": [
+        "task"
+      ]
+    },
+    {
+      "summary": "学到：用户说“返回/回来”通常表示回充。",
+      "user_input": "回去充电吧",
+      "learned_at": "2026-04-02T19:54:28",
+      "tags": [
+        "return"
+      ]
+    },
+    {
+      "summary": "记录：最近执行过与 厨房 相关的任务。",
+      "user_input": "小幻，我在路点与客人交谈，可以去厨房帮我拿瓶水吗。",
+      "learned_at": "2026-04-03T10:48:54",
+      "tags": [
+        "task"
+      ]
+    },
+    {
+      "summary": "记录：最近执行过与 厨房 相关的任务。",
+      "user_input": "小幻，我在路点与客人交谈，可以去厨房帮我拿瓶水吗。",
+      "learned_at": "2026-04-03T11:05:49",
+      "tags": [
+        "task"
       ]
     }
   ]

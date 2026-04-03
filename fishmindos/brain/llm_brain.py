@@ -1412,20 +1412,29 @@ class LLMBrain:
         if not tasks:
             return ""
 
-        tasks_json = json.dumps(tasks, ensure_ascii=False)
         identity = ""
         try:
             identity = get_config().app.identity or ""
         except Exception:
             pass
 
+        preview_context = self._collect_plan_preview_context(user_input, tasks)
+        tasks_json = json.dumps(tasks, ensure_ascii=False)
+        context_json = json.dumps(preview_context, ensure_ascii=False)
+
         system_msg = (
-            f"你是{identity or '小幻'}，一个友好活泼的机器人助手。"
-            "根据用户的请求和即将执行的任务步骤，用第一人称说一句简短（20字以内）的执行预告。"
-            "语气要自然、积极，体现角色性格，不要列出每个步骤，说大概要做什么即可。"
-            "只输出那一句话，不要加任何前缀或解释。"
+            f"你是{identity or '小幻'}，一个会主动理解情境的机器人助手。"
+            "请根据用户请求、任务步骤和上下文，说一句自然的执行预告。"
+            "优先说任务目的和你要帮用户完成什么，比如“我去帮您拿水，等下送过去”。"
+            "不要机械复述路线，不要说“先去A再去B”这种步骤播报，除非完全无法概括任务目的。"
+            "使用第一人称“我”，口语自然，简短（12到30字）。"
+            "只输出一句话，不要加前缀、解释或引号。"
         )
-        user_msg = f"用户请求：{user_input}\n任务步骤：{tasks_json}"
+        user_msg = (
+            f"用户请求：{user_input}\n"
+            f"任务步骤：{tasks_json}\n"
+            f"任务上下文：{context_json}"
+        )
 
         import threading as _threading
         result_holder: list = [None]
@@ -1451,27 +1460,224 @@ class LLMBrain:
         t.join(timeout=10)
 
         if result_holder[0]:
-            return result_holder[0]
+            preview_text = self._normalize_plan_preview_text(result_holder[0])
+            if preview_text and not self._preview_sounds_mechanical(preview_text, preview_context, identity):
+                return preview_text
         if error_holder[0] is not None:
             print(f"[WARN] preview 生成失败: {error_holder[0]}")
-        # LLM 超时或返回空 → 规则兜底
-        return self._build_plan_preview_fallback(tasks, identity)
+        # LLM 超时、返回空或文案太机械 → 规则兜底
+        return self._build_plan_preview_fallback(tasks, identity, user_input=user_input)
 
-    def _build_plan_preview_fallback(self, tasks: list, identity: str) -> str:
+    def _collect_plan_preview_context(self, user_input: str, tasks: list) -> Dict[str, Any]:
+        goto_targets: List[str] = []
+        speak_texts: List[str] = []
+        pickup_target = ""
+        dropoff_target = ""
+        last_goto = ""
+        has_pickup = False
+        has_dropoff = False
+        has_dock = False
+        has_stop_nav = False
+        item_name = self._extract_item_name(user_input)
+
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+
+            action = str(task.get("action", "")).strip().lower()
+            if action == "goto":
+                target = str(task.get("target") or "").strip()
+                if target:
+                    goto_targets.append(target)
+                    last_goto = target
+                continue
+
+            if action == "dock":
+                has_dock = True
+                continue
+
+            if action == "stop_nav":
+                has_stop_nav = True
+                continue
+
+            if action == "speak":
+                text = str(task.get("text") or "").strip()
+                if text:
+                    speak_texts.append(text)
+                    if not item_name:
+                        item_name = self._extract_item_name(text)
+                    phase = self._infer_preview_phase_from_text(text)
+                    if phase == "pickup":
+                        has_pickup = True
+                        if last_goto and not pickup_target:
+                            pickup_target = last_goto
+                    elif phase == "dropoff":
+                        has_dropoff = True
+                        if last_goto and not dropoff_target:
+                            dropoff_target = last_goto
+                continue
+
+            if action == "wait_confirm":
+                phase = str(task.get("handover_phase", "") or "").strip().lower()
+                if phase == "pickup":
+                    has_pickup = True
+                    if last_goto and not pickup_target:
+                        pickup_target = last_goto
+                elif phase == "dropoff":
+                    has_dropoff = True
+                    if last_goto and not dropoff_target:
+                        dropoff_target = last_goto
+                if not item_name:
+                    item_name = str(task.get("item_name") or "").strip()
+
+        route = self._extract_delivery_route(user_input)
+        route_source = str(route.get("source") or "").strip()
+        route_target = str(route.get("target") or "").strip()
+        if route_source and not pickup_target:
+            pickup_target = route_source
+        if route_target and not dropoff_target:
+            dropoff_target = route_target
+
+        carrying_items_raw = self.session_context.get("carrying_items")
+        carrying_items: List[str] = []
+        if isinstance(carrying_items_raw, list):
+            carrying_items = [str(item).strip() for item in carrying_items_raw if str(item).strip()]
+        carrying_item = str(self.session_context.get("carrying_item") or "").strip()
+        if not carrying_item and carrying_items:
+            carrying_item = "、".join(carrying_items)
+
+        mission_kind = "generic"
+        if has_stop_nav:
+            mission_kind = "stop_nav"
+        elif has_pickup or has_dropoff or item_name or carrying_item:
+            mission_kind = "delivery"
+        elif goto_targets:
+            mission_kind = "navigation"
+        elif has_dock:
+            mission_kind = "dock"
+
+        return {
+            "mission_kind": mission_kind,
+            "goto_targets": goto_targets,
+            "pickup_target": pickup_target,
+            "dropoff_target": dropoff_target,
+            "item_name": item_name,
+            "carrying_item": carrying_item,
+            "current_location": str(self.session_context.get("current_location") or "").strip(),
+            "has_pickup": has_pickup,
+            "has_dropoff": has_dropoff,
+            "has_dock": has_dock,
+            "has_stop_nav": has_stop_nav,
+            "speak_texts": speak_texts[:3],
+        }
+
+    def _infer_preview_phase_from_text(self, text: str) -> str:
+        raw = str(text or "").strip()
+        if not raw:
+            return ""
+        if any(marker in raw for marker in ("放到篮子里", "放在篮子里", "放进篮子", "帮我拿")):
+            return "pickup"
+        if any(marker in raw for marker in ("请拿走", "拿来了", "送到", "交给", "给您")):
+            return "dropoff"
+        return ""
+
+    def _normalize_plan_preview_text(self, text: Any) -> str:
+        preview = str(text or "").strip().strip("\"'“”‘’")
+        preview = re.sub(r"\s+", "", preview)
+        if not preview:
+            return ""
+        preview = re.sub(r"^(执行预告[:：]|预告[:：])", "", preview)
+        if preview and preview[-1] not in "。！？!?~～":
+            preview += "。"
+        return preview
+
+    def _preview_sounds_mechanical(
+        self,
+        text: str,
+        preview_context: Dict[str, Any],
+        identity: str,
+    ) -> bool:
+        normalized = re.sub(r"\s+", "", str(text or ""))
+        if not normalized:
+            return True
+
+        if identity and identity in normalized and "我" not in normalized:
+            return True
+
+        has_delivery_context = bool(
+            preview_context.get("has_pickup")
+            or preview_context.get("has_dropoff")
+            or preview_context.get("item_name")
+            or preview_context.get("carrying_item")
+        )
+        if has_delivery_context and "先去" in normalized and "再去" in normalized:
+            if not any(keyword in normalized for keyword in ("帮", "拿", "取", "送", "带", "交")):
+                return True
+
+        if preview_context.get("has_stop_nav") and "停" not in normalized:
+            return True
+
+        if len(normalized) > 36:
+            return True
+
+        return False
+
+    def _build_plan_preview_fallback(self, tasks: list, identity: str, user_input: str = "") -> str:
         """规则兜底：从任务列表生成简短预告语。"""
-        name = identity or "我"
-        gotos = [t.get("target", "") for t in tasks if isinstance(t, dict) and t.get("action") == "goto" and t.get("target")]
-        has_dock = any(isinstance(t, dict) and t.get("action") == "dock" for t in tasks)
-        speak_texts = [t.get("text", "") for t in tasks if isinstance(t, dict) and t.get("action") == "speak" and t.get("text")]
+        del identity
+        preview_context = self._collect_plan_preview_context(user_input, tasks)
+        gotos = preview_context.get("goto_targets", []) or []
+        source = str(preview_context.get("pickup_target") or "").strip()
+        target = str(preview_context.get("dropoff_target") or "").strip()
+        item_name = str(preview_context.get("item_name") or "").strip()
+        carrying_item = str(preview_context.get("carrying_item") or "").strip()
+        has_pickup = bool(preview_context.get("has_pickup"))
+        has_dropoff = bool(preview_context.get("has_dropoff"))
+        has_dock = bool(preview_context.get("has_dock"))
+        has_stop_nav = bool(preview_context.get("has_stop_nav"))
+        speak_texts = preview_context.get("speak_texts", []) or []
+
+        if has_stop_nav:
+            return "好呀，我先停下导航。"
+
+        if has_pickup and has_dropoff:
+            if item_name and source and target:
+                return f"好呀，我去{source}帮您拿{item_name}，等下送到{target}。"
+            if item_name and source:
+                return f"好呀，我去{source}帮您拿{item_name}，马上送过去。"
+            if item_name and target:
+                return f"好呀，我去帮您拿{item_name}，等下送到{target}。"
+            if source and target:
+                return f"好呀，我先去{source}处理一下，等下去{target}。"
+            if item_name:
+                return f"好呀，我去帮您拿{item_name}，马上送过去。"
+            return "好呀，我去帮您处理一下，等下送过去。"
+
+        if has_pickup:
+            if item_name and source:
+                return f"好呀，我去{source}帮您拿{item_name}。"
+            if item_name:
+                return f"好呀，我去帮您拿{item_name}。"
+            if source:
+                return f"好呀，我先去{source}处理一下。"
+
+        if has_dropoff:
+            delivery_item = carrying_item or item_name
+            if delivery_item and target:
+                return f"好呀，我这就把{delivery_item}送到{target}。"
+            if delivery_item:
+                return f"好呀，我这就把{delivery_item}送过去。"
+            if target:
+                return f"好呀，我这就去{target}处理。"
 
         if len(gotos) >= 2:
-            return f"好的，{name}先去{gotos[0]}，再去{gotos[1]}{'，然后回来充电' if has_dock else ''}！"
+            return f"好呀，我先去{gotos[0]}处理一下，再去{gotos[1]}。"
         if len(gotos) == 1:
-            return f"好的，{name}马上去{gotos[0]}{'，然后回来充电' if has_dock else ''}！"
+            return f"好呀，我这就去{gotos[0]}。"
         if has_dock:
-            return f"好的，{name}马上回去充电！"
+            return "好呀，我先回充电点待命。"
         if speak_texts:
-            return f"好的，{name}马上去执行！"
+            return "好呀，我这就去帮您处理。"
         return ""
 
     def _get_world_prompt_info(self) -> str:
